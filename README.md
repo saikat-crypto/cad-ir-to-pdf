@@ -1,28 +1,47 @@
 # cad-ir-to-pdf
 
-High-fidelity vector CAD compiler converting **La Vinci Intermediate Representation (IR v3)** into publication-grade vector PDF drawings with pure native vector geometry and zero pixelation at any zoom level.
+<div align="center">
 
-Part of the **La Vinci** autonomous CAD intelligence pipeline:
-$$\text{AutoCAD DWG/DXF} \xrightarrow[\text{Product 1}]{\text{cad-extractor-ir}} \text{LAVINCI\_CAD\_IR\_V3} \xrightarrow[\text{Product 3}]{\text{cad-ir-to-pdf}} \text{Publication-Grade Vector PDF}$$
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-brightgreen.svg)](https://python.org)
+[![Output: Vector%20PDF](https://img.shields.io/badge/Output-Vector%20PDF-red.svg)](#)
+[![Ecosystem](https://img.shields.io/badge/Project-La%20Vinci-purple.svg)](#)
+
+**High-Fidelity Vector CAD to PDF Compiler.**  
+Converts a [`LAVINCI_CAD_IR_V3`](https://github.com/saikat-crypto/cad-extractor-ir) JSON payload into publication-grade vector PDF drawings with pure native vector geometry and zero pixelation at any zoom level.
+
+*Engineered by **Saikat Dutta Chowdhury** as part of the **La Vinci** engineering initiative.*
+
+</div>
 
 ---
 
-## Features
+## 💡 Pipeline Position
+
+This package is a core downstream spoke of the La Vinci Hub-and-Spoke CAD architecture:
+
+```
+DWG / DXF ──► cad-extractor-ir ──► LAVINCI_CAD_IR_V3 ──► cad-ir-to-pdf ──► Vector PDF
+```
+
+---
+
+## ✨ Features
 
 - **100% Native PDF Vector Streams**: Lines, polylines, arcs, circles, and annotations are rendered into native PostScript vector streams (`pdfgen.canvas`). Infinite clarity at 6400% zoom.
-- **Analytic Arc-to-Bézier Subdivision**: Implements cubic Bézier arc subdivision ($\Delta\theta \le 90^\circ, k = \frac{4}{3}\tan(\Delta\theta/4)$) maintaining sub-millimeter geometric accuracy across all zoom levels.
-- **Hierarchical Block & Component Flattening**: Evaluates 2D affine transformation matrices ($T \cdot R \cdot S$) on nested CAD blocks (`INSERT`), accurately scaling, rotating, and projecting doors, windows, and fixtures.
+- **Analytic Arc-to-Bézier Subdivision**: Implements cubic Bézier arc subdivision maintaining sub-millimeter geometric accuracy across all zoom levels.
+- **Hierarchical Block & Component Flattening**: Evaluates 2D affine transformation matrices (`T · R · S`) on nested CAD blocks (`INSERT`), accurately scaling, rotating, and projecting doors, windows, and fixtures.
 - **Isotropic Auto-Fit Viewport**: Automatically computes full-extent bounding boxes and centers drawings on target paper sizes with clean margins, preserving 1:1 aspect ratios.
 - **Text & MText Sanitization**: Strips raw AutoCAD formatting tags (e.g. `\P`, font overrides) while preserving multi-line room labels, scales, and dimensional text.
 - **Modular Presets Architecture**: Ready for one-to-many PDF output configurations (A4, A3, Arch D, landscape/portrait, Model/Paper space).
 
 ---
 
-## Active Default Preset: `presentation-fit-vector`
+## 📐 Active Default Preset: `presentation-fit-vector`
 
 | Parameter | Value | Description |
 | :--- | :--- | :--- |
-| **Paper Size** | **`A3`** | Universal architectural presentation format ($420 \times 297\,\text{mm}$ / $1190.55 \times 841.89\,\text{pt}$). |
+| **Paper Size** | **`A3`** | Universal architectural presentation format (420 x 297 mm / 1190.55 x 841.89 pt). |
 | **Orientation** | **`Landscape`** | Standard widescreen blueprint layout. |
 | **Target Space** | **`Model`** | Automatically targets Model space geometry to ensure true building extents are centered and scaled. |
 | **Viewport Scale** | **`Fit`** | Isotropic auto-fit with 12mm boundary margins. |
@@ -32,7 +51,7 @@ $$\text{AutoCAD DWG/DXF} \xrightarrow[\text{Product 1}]{\text{cad-extractor-ir}}
 
 ---
 
-## Installation
+## 🚀 Installation
 
 ```bash
 git clone https://github.com/saikat-crypto/cad-ir-to-pdf.git
@@ -42,7 +61,7 @@ pip install -e .
 
 ---
 
-## CLI Usage
+## 💻 CLI Usage
 
 ### Basic Compilation
 ```bash
@@ -80,7 +99,7 @@ options:
 
 ---
 
-## Python API
+## 🐍 Python API
 
 ```python
 from cad_ir_to_pdf import compile_ir_to_pdf, PRESETS
@@ -95,6 +114,6 @@ compile_ir_to_pdf("floor_plan.json", "output_arch_d.pdf", preset=arch_d_preset)
 
 ---
 
-## License
+## 📄 License
 
 MIT License. Copyright (c) 2026 La Vinci.
