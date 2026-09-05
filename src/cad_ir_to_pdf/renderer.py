@@ -1,4 +1,4 @@
-﻿"""
+"""
 renderer.py — High-fidelity ReportLab vector canvas renderer for CAD entities.
 """
 
@@ -31,6 +31,41 @@ def hex_to_pdf_color(hex_str: Optional[str], fallback: str = "#1E1E1E") -> color
         return colors.HexColor(fallback)
 
 
+def sanitize_cad_text(text: str) -> str:
+    """
+    Cleans raw AutoCAD TEXT and MTEXT strings:
+    - Removes formatting codes like \\f..., \\W..., \\H..., \\C..., \\Q...
+    - Decodes AutoCAD inline escapes: %%u/%%U (underline), %%d/%%D (°), %%p/%%P (±), %%c/%%C (Ø), %%% (%)
+    - Decodes CP1252/ISO-8859 superscript replacement characters (\\ufffd or \\u00b2) -> ²
+    - Handles line breaks (\\P, \\p -> \\n)
+    """
+    if not text:
+        return ""
+
+    # Line break escapes
+    txt = text.replace(r"\P", "\n").replace(r"\p", "\n")
+
+    # AutoCAD inline special escapes
+    txt = re.sub(r"%%[uU]", "", txt)  # Underline toggle
+    txt = re.sub(r"%%[oO]", "", txt)  # Overline toggle
+    txt = re.sub(r"%%[dD]", "\u00b0", txt)  # Degree symbol °
+    txt = re.sub(r"%%[pP]", "\u00b1", txt)  # Plus-minus symbol ±
+    txt = re.sub(r"%%[cC]", "\u00d8", txt)  # Diameter symbol Ø
+    txt = txt.replace("%%%", "%")
+
+    # MTEXT formatting codes: \f...;, \H...;, \W...;, \C...;, \Q...;, \T...;, \A...;
+    txt = re.sub(r"\\[a-zA-Z][^;]*;", "", txt)
+    txt = re.sub(r"\\[a-zA-Z~]", "", txt)
+
+    # Braces grouping
+    txt = txt.replace("{", "").replace("}", "").strip()
+
+    # Unicode replacement character for superscript 2 (e.g. Area, m²)
+    txt = txt.replace("\ufffd", "\u00b2")
+
+    return txt
+
+
 class PdfVectorRenderer:
     """Draws CAD primitives and annotations onto a ReportLab Canvas in PostScript point space."""
 
@@ -48,7 +83,9 @@ class PdfVectorRenderer:
         self.default_line_width = preset.default_line_width_pt
 
     def resolve_color(self, entity_color: Optional[str], layer_name: Optional[str]) -> colors.Color:
-        """Determines entity color via entity override -> layer color -> fallback."""
+        """Determines entity color via preset mode (monochrome) -> entity override -> layer color -> fallback."""
+        if self.preset.color_mode == "monochrome":
+            return hex_to_pdf_color(self.preset.default_stroke_color, "#000000")
         if entity_color and entity_color.startswith("#"):
             return hex_to_pdf_color(entity_color, self.preset.default_stroke_color)
         if layer_name and layer_name in self.layer_colors:
@@ -196,28 +233,71 @@ class PdfVectorRenderer:
         color: Optional[str] = None,
         layer: Optional[str] = None,
     ) -> None:
-        """Renders text labels (e.g., room names, dimensions)."""
+        """Renders text labels (e.g., room names, room numbers, elevation markers)."""
         if not text or len(position) < 2:
             return
 
-        # Sanitize AutoCAD MText codes like {\LLIVING ROOM\P\H0.6667x;\l...}
-        clean = text.replace(r"\P", "\n").replace(r"\p", "\n")
-        clean = re.sub(r"\\[A-Za-z0-9]+;?", "", clean)
-        clean = clean.replace("{", "").replace("}", "").strip()
-
+        clean = sanitize_cad_text(text)
         if not clean:
             return
 
         px, py = self.vp.to_pdf(position[0], position[1])
-        # Font size proportional to CAD height scaled to PDF points, clamped to readable size
-        pdf_font_size = max(5.0, min(36.0, self.vp.to_pdf_length(height)))
+        # Font size proportional to CAD height scaled to PDF points, clamped to readable limits
+        pdf_font_size = max(1.0, min(36.0, self.vp.to_pdf_length(height)))
 
         col = self.resolve_color(color, layer)
         self.c.setFillColor(col)
         self.c.setFont(self.preset.font_name, pdf_font_size)
 
+        # In AutoCAD MTEXT, the insertion point is Top-Left; shift downward to font baseline
+        baseline_y = py - (pdf_font_size * 0.75)
+
         lines = clean.split("\n")
         line_spacing = pdf_font_size * 1.2
         for i, line_str in enumerate(lines):
-            line_y = py - (i * line_spacing)
+            line_y = baseline_y - (i * line_spacing)
             self.c.drawString(px, line_y, line_str.strip())
+
+    def draw_dimension_text(
+        self,
+        measurement: float,
+        defpoint: Sequence[float],
+        defpoint2: Sequence[float],
+        override_text: Optional[str] = None,
+        color: Optional[str] = None,
+        layer: Optional[str] = None,
+    ) -> None:
+        """Renders linear dimension measurement text centered along the dimension line."""
+        if measurement is None or measurement <= 0 or len(defpoint) < 2 or len(defpoint2) < 2:
+            return
+
+        txt = sanitize_cad_text(override_text) if override_text else f"{round(measurement)}"
+        if not txt:
+            return
+
+        dx = abs(defpoint[0] - defpoint2[0])
+        dy = abs(defpoint[1] - defpoint2[1])
+
+        # Dimension text scaled proportionally
+        font_sz = max(1.0, min(14.0, self.vp.to_pdf_length(250.0)))
+        col = self.resolve_color(color, layer)
+        self.c.setFillColor(col)
+        self.c.setFont(self.preset.font_name, font_sz)
+
+        if dx >= dy:
+            # Horizontal dimension line: center above line
+            mid_x = (defpoint[0] + defpoint2[0]) / 2.0
+            mid_y = defpoint[1] + 100.0
+            px, py = self.vp.to_pdf(mid_x, mid_y)
+            self.c.drawCentredString(px, py, txt)
+        else:
+            # Vertical dimension line: center and rotate 90 degrees
+            mid_x = defpoint[0] - 100.0
+            mid_y = (defpoint[1] + defpoint2[1]) / 2.0
+            px, py = self.vp.to_pdf(mid_x, mid_y)
+            self.c.saveState()
+            self.c.translate(px, py)
+            self.c.rotate(90)
+            self.c.drawCentredString(0, 0, txt)
+            self.c.restoreState()
+

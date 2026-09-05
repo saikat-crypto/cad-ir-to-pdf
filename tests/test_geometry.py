@@ -1,4 +1,4 @@
-﻿import math
+import math
 import pytest
 from cad_ir_to_pdf.geometry import (
     BoundingBox,
@@ -77,3 +77,32 @@ def test_viewport_mapping_isotropic():
     px, py = vp.to_pdf(50.0, 25.0)
     assert math.isclose(px, 100.0, abs_tol=1e-6)
     assert math.isclose(py, 100.0, abs_tol=1e-6)
+
+
+def test_find_primary_cluster_pruning():
+    from cad_ir_to_pdf.geometry import find_primary_cluster_1d
+    # 50 points clustered between 0 and 100, plus 1 outlier at -10,000
+    points = [float(i * 2) for i in range(50)] + [-10000.0]
+    min_v, max_v = find_primary_cluster_1d(points, min_gap_fraction=0.10, max_outlier_ratio=0.03)
+    assert min_v == 0.0
+    assert max_v == 98.0
+
+
+def test_compute_ir_extents_with_outliers():
+    from cad_ir_to_pdf.geometry import compute_ir_extents
+    # Build IR data with a cluster of lines near (0..100, 0..100) and 1 rogue scratch component at (-90000, 50000)
+    lines = [{"start": [float(i), float(i)], "end": [float(i + 1), float(i + 1)], "space": "Model"} for i in range(40)]
+    ir_data = {
+        "geometry_primitives": {"primitives": {"lines": lines}},
+        "components": [{"position": [-90000.0, 50000.0, 0.0], "space": "Model", "block_name": "none"}],
+    }
+
+    # Pruned extents should discard the -90000 outlier
+    bbox_pruned = compute_ir_extents(ir_data, target_space="Model", prune_outliers=True)
+    assert bbox_pruned.min_x == 0.0
+    assert bbox_pruned.max_x == 40.0
+
+    # Unpruned extents include the outlier
+    bbox_raw = compute_ir_extents(ir_data, target_space="Model", prune_outliers=False)
+    assert bbox_raw.min_x == -90000.0
+

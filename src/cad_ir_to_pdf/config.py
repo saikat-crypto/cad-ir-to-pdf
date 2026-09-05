@@ -1,4 +1,4 @@
-﻿"""
+"""
 config.py — Preset and configuration architecture for CAD IR to PDF compiler.
 """
 
@@ -24,19 +24,23 @@ PAGE_SIZES_PORTRAIT: Dict[str, Tuple[float, float]] = {
 @dataclass
 class PdfPreset:
     """Configuration preset for rendering CAD IR to a PDF document."""
-    name: str = "presentation-fit-vector"
+    name: str = "monochrome-architectural"
     paper_size: str = "A3"
     orientation: str = "landscape"       # "landscape" or "portrait"
     target_space: str = "Model"          # "Model" (focus on building) or "all"
     margin_mm: float = 12.0              # Border margin
     scale_mode: str = "fit"              # "fit" (isotropic auto-fit) or "fixed"
     fixed_scale: Optional[float] = None  # e.g., 0.02 for 1:50
-    default_line_width_pt: float = 0.6   # Base line weight in points
+    default_line_width_pt: float = 0.35  # Base line weight in points (clean blueprint weight)
     background_color: Optional[str] = "#FFFFFF"  # White page background
-    default_stroke_color: str = "#1A1A1A"        # High-contrast charcoal
-    draw_annotations: bool = True                # Render text annotations / room labels
-    draw_components: bool = True                 # Render block instances
-    font_name: str = "Helvetica"                 # Standard PDF embedded sans-serif font
+    default_stroke_color: str = "#000000"        # Crisp architectural black
+    color_mode: str = "monochrome"       # "monochrome" (pure black plot), "layer_color", or "true_color"
+    draw_annotations: bool = True        # Render text annotations / room labels
+    draw_components: bool = True         # Render block instances
+    draw_dimensions: bool = True         # Render dimension blocks and measurement text
+    prune_outliers: bool = True          # Automatically prune isolated scratch geometry voids
+    custom_bbox: Optional[Tuple[float, float, float, float]] = None  # (min_x, min_y, max_x, max_y)
+    font_name: str = "Helvetica"         # Standard PDF embedded sans-serif font
 
     def get_page_dimensions_pt(self) -> Tuple[float, float]:
         """Returns (width_pt, height_pt) taking orientation into account."""
@@ -52,30 +56,56 @@ class PdfPreset:
     def margin_pt(self) -> float:
         return self.margin_mm * PT_PER_MM
 
-# Canonical Master Preset
-DEFAULT_PRESET = PdfPreset(
+# Canonical Master Presets
+ARCHITECTURAL_MONOCHROME_PRESET = PdfPreset(
+    name="monochrome-architectural",
+    paper_size="A3",
+    orientation="landscape",
+    target_space="Model",
+    margin_mm=12.0,
+    scale_mode="fit",
+    default_line_width_pt=0.35,
+    background_color="#FFFFFF",
+    default_stroke_color="#000000",
+    color_mode="monochrome",
+    draw_annotations=True,
+    draw_components=True,
+    draw_dimensions=True,
+    prune_outliers=True,
+)
+
+PRESENTATION_COLOR_PRESET = PdfPreset(
     name="presentation-fit-vector",
     paper_size="A3",
     orientation="landscape",
     target_space="Model",
     margin_mm=12.0,
     scale_mode="fit",
-    default_line_width_pt=0.6,
+    default_line_width_pt=0.5,
     background_color="#FFFFFF",
     default_stroke_color="#1A1A1A",
+    color_mode="layer_color",
     draw_annotations=True,
     draw_components=True,
+    draw_dimensions=True,
+    prune_outliers=True,
 )
 
+DEFAULT_PRESET = ARCHITECTURAL_MONOCHROME_PRESET
+
 PRESETS: Dict[str, PdfPreset] = {
-    "presentation-fit-vector": DEFAULT_PRESET,
+    "monochrome-architectural": ARCHITECTURAL_MONOCHROME_PRESET,
+    "presentation-fit-vector": PRESENTATION_COLOR_PRESET,
     "quick-preview-a4": PdfPreset(
         name="quick-preview-a4",
         paper_size="A4",
         orientation="landscape",
         target_space="Model",
         margin_mm=8.0,
-        default_line_width_pt=0.4,
+        default_line_width_pt=0.35,
+        color_mode="monochrome",
+        draw_dimensions=True,
+        prune_outliers=True,
     ),
     "permit-arch-d": PdfPreset(
         name="permit-arch-d",
@@ -83,6 +113,9 @@ PRESETS: Dict[str, PdfPreset] = {
         orientation="landscape",
         target_space="Model",
         margin_mm=25.4,
-        default_line_width_pt=0.75,
+        default_line_width_pt=0.5,
+        color_mode="monochrome",
+        draw_dimensions=True,
+        prune_outliers=True,
     ),
 }

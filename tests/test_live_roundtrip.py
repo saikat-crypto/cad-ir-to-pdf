@@ -1,14 +1,16 @@
-﻿import pytest
+import pytest
 from pathlib import Path
 from cad_ir_to_pdf.compiler import compile_ir_to_pdf
 import pymupdf
 
 
-def test_live_ir_to_pdf_roundtrip():
-    ir_path = Path("experiments/e2e_demo/live_extracted.json")
+def test_live_ir_to_pdf_roundtrip(tmp_path):
+    fixture_path = Path(__file__).parent / "fixtures" / "live_extracted.json"
+    fallback_path = Path(__file__).resolve().parent.parent.parent.parent / "experiments" / "e2e_demo" / "live_extracted.json"
+    ir_path = fixture_path if fixture_path.exists() else fallback_path
     assert ir_path.exists(), "live_extracted.json should exist"
 
-    out_pdf = Path("experiments/e2e_demo/live_test_output.pdf")
+    out_pdf = tmp_path / "live_test_output.pdf"
     res = compile_ir_to_pdf(ir_path, out_pdf)
 
     assert res.exists()

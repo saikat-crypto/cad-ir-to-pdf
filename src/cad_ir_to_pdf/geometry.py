@@ -1,4 +1,4 @@
-﻿"""
+"""
 geometry.py — Bounding box calculation, affine transformation, and coordinate projection.
 """
 
@@ -169,16 +169,109 @@ def compute_primitive_bbox(primitives: Dict[str, Any], target_space: Optional[st
     return bbox
 
 
-def compute_ir_extents(ir_data: Dict[str, Any], target_space: Optional[str] = "Model") -> BoundingBox:
+def find_primary_cluster_1d(
+    values: Sequence[float],
+    min_gap_fraction: float = 0.10,
+    max_outlier_ratio: float = 0.02,
+) -> Tuple[float, float]:
+    """
+    Identifies the primary coordinate span by detecting large empty voids separating
+    tiny isolated outlier clusters (< max_outlier_ratio) from the main drawing cluster.
+    """
+    if len(values) < 20:
+        return (min(values), max(values)) if values else (0.0, 100.0)
+
+    vals = sorted(values)
+    n = len(vals)
+    total_span = vals[-1] - vals[0]
+    if total_span <= 1e-6:
+        return (vals[0], vals[-1])
+
+    start_idx = 0
+    for i in range(n - 1):
+        gap = vals[i + 1] - vals[i]
+        pts_on_left = i + 1
+        if gap >= min_gap_fraction * total_span and (pts_on_left / n) <= max_outlier_ratio:
+            start_idx = i + 1
+        elif (pts_on_left / n) > max_outlier_ratio:
+            break
+
+    end_idx = n - 1
+    for i in range(n - 1, 0, -1):
+        gap = vals[i] - vals[i - 1]
+        pts_on_right = n - i
+        if gap >= min_gap_fraction * total_span and (pts_on_right / n) <= max_outlier_ratio:
+            end_idx = i - 1
+        elif (pts_on_right / n) > max_outlier_ratio:
+            break
+
+    return (vals[start_idx], vals[end_idx])
+
+
+def compute_ir_extents(
+    ir_data: Dict[str, Any],
+    target_space: Optional[str] = "Model",
+    prune_outliers: bool = True,
+    custom_bbox: Optional[Tuple[float, float, float, float]] = None,
+) -> BoundingBox:
     """
     Calculates the true bounding box of the target space in the IR payload.
+    When prune_outliers is True, filters out isolated scratch geometry clusters
+    separated by large coordinate voids (>10% span, <2% entities).
     """
-    bbox = BoundingBox()
+    if custom_bbox is not None and len(custom_bbox) == 4:
+        return BoundingBox(
+            min_x=custom_bbox[0],
+            min_y=custom_bbox[1],
+            max_x=custom_bbox[2],
+            max_y=custom_bbox[3],
+        )
+
+    all_xs: List[float] = []
+    all_ys: List[float] = []
+
+    # Helper to track point
+    def add_point(x: float, y: float) -> None:
+        if math.isfinite(x) and math.isfinite(y):
+            all_xs.append(x)
+            all_ys.append(y)
 
     # 1. Root geometry primitives
     geom_prims = ir_data.get("geometry_primitives", {}).get("primitives", {})
-    root_bbox = compute_primitive_bbox(geom_prims, target_space=target_space)
-    bbox.expand_bbox(root_bbox)
+    for line in geom_prims.get("lines", []):
+        if target_space and line.get("space") and line.get("space") != target_space:
+            continue
+        st = line.get("start")
+        en = line.get("end")
+        if st and len(st) >= 2:
+            add_point(st[0], st[1])
+        if en and len(en) >= 2:
+            add_point(en[0], en[1])
+
+    for arc in geom_prims.get("arcs", []):
+        if target_space and arc.get("space") and arc.get("space") != target_space:
+            continue
+        c = arc.get("center")
+        r = arc.get("radius", 0.0)
+        if c and len(c) >= 2 and r > 0:
+            add_point(c[0] - r, c[1] - r)
+            add_point(c[0] + r, c[1] + r)
+
+    for circle in geom_prims.get("circles", []):
+        if target_space and circle.get("space") and circle.get("space") != target_space:
+            continue
+        c = circle.get("center")
+        r = circle.get("radius", 0.0)
+        if c and len(c) >= 2 and r > 0:
+            add_point(c[0] - r, c[1] - r)
+            add_point(c[0] + r, c[1] + r)
+
+    for pline in geom_prims.get("polylines", []):
+        if target_space and pline.get("space") and pline.get("space") != target_space:
+            continue
+        for pt in pline.get("points", []):
+            if len(pt) >= 2:
+                add_point(pt[0], pt[1])
 
     # 2. Block definitions cache
     block_defs = ir_data.get("block_definitions", {})
@@ -186,7 +279,7 @@ def compute_ir_extents(ir_data: Dict[str, Any], target_space: Optional[str] = "M
     for name, bdata in block_defs.items():
         block_bboxes[name] = compute_primitive_bbox(bdata)
 
-    # 3. Components (filtered by target_space)
+    # 3. Components (transformed into world coordinates)
     components = ir_data.get("components", [])
     for comp in components:
         if target_space and comp.get("space") and comp.get("space") != target_space:
@@ -216,19 +309,40 @@ def compute_ir_extents(ir_data: Dict[str, Any], target_space: Optional[str] = "M
             ]
             for cx, cy in corners:
                 tx, ty = mat.transform_point(cx, cy)
-                bbox.expand(tx, ty)
+                add_point(tx, ty)
         else:
             if len(pos) >= 2:
-                bbox.expand(pos[0], pos[1])
+                add_point(pos[0], pos[1])
 
-    # 4. Annotations (filtered by target_space)
-    annotations = ir_data.get("annotations", [])
-    for annot in annotations:
+    # 4. Annotations
+    for annot in ir_data.get("annotations", []):
         if target_space and annot.get("space") and annot.get("space") != target_space:
             continue
         pos = annot.get("position", [0.0, 0.0])
         if len(pos) >= 2:
-            bbox.expand(pos[0], pos[1])
+            add_point(pos[0], pos[1])
+
+    # 5. Dimensions
+    for dim in ir_data.get("dimensions", []):
+        if target_space and dim.get("space") and dim.get("space") != target_space:
+            continue
+        dp = dim.get("defpoint")
+        dp2 = dim.get("defpoint2")
+        if dp and len(dp) >= 2:
+            add_point(dp[0], dp[1])
+        if dp2 and len(dp2) >= 2:
+            add_point(dp2[0], dp2[1])
+
+    bbox = BoundingBox()
+    if all_xs and all_ys:
+        if prune_outliers and len(all_xs) >= 20:
+            min_x, max_x = find_primary_cluster_1d(all_xs)
+            min_y, max_y = find_primary_cluster_1d(all_ys)
+            bbox.expand(min_x, min_y)
+            bbox.expand(max_x, max_y)
+        else:
+            for x, y in zip(all_xs, all_ys):
+                bbox.expand(x, y)
 
     # Fallback if drawing has declared extents or is empty
     if not bbox.is_valid:

@@ -1,4 +1,4 @@
-﻿"""
+"""
 cli.py — Command-Line Interface for cad-ir-to-pdf.
 """
 
@@ -21,8 +21,13 @@ def main() -> int:
     parser.add_argument(
         "--preset",
         choices=list(PRESETS.keys()),
-        default="presentation-fit-vector",
-        help="PDF styling and layout preset (default: presentation-fit-vector).",
+        default="monochrome-architectural",
+        help="PDF styling and layout preset (default: monochrome-architectural).",
+    )
+    parser.add_argument(
+        "--color-mode",
+        choices=["monochrome", "layer_color", "true_color"],
+        help="Override color mode (monochrome architectural black vs layer colors).",
     )
     parser.add_argument(
         "--paper-size",
@@ -33,6 +38,16 @@ def main() -> int:
         "--orientation",
         choices=["landscape", "portrait"],
         help="Override page orientation.",
+    )
+    parser.add_argument(
+        "--no-dimensions",
+        action="store_true",
+        help="Disable dimension block and measurement rendering.",
+    )
+    parser.add_argument(
+        "--no-outlier-pruning",
+        action="store_true",
+        help="Disable automatic outlier bounding box pruning.",
     )
 
     args = parser.parse_args()
@@ -47,19 +62,34 @@ def main() -> int:
     preset = PRESETS.get(args.preset, DEFAULT_PRESET)
 
     # Apply overrides if provided
-    if args.paper_size or args.orientation:
-        # Clone preset
+    draw_dims = False if args.no_dimensions else preset.draw_dimensions
+    prune_out = False if args.no_outlier_pruning else preset.prune_outliers
+    color_m = args.color_mode or preset.color_mode
+
+    if (
+        args.paper_size
+        or args.orientation
+        or args.color_mode
+        or args.no_dimensions
+        or args.no_outlier_pruning
+    ):
         preset = type(preset)(
             name=f"{preset.name}-custom",
             paper_size=args.paper_size or preset.paper_size,
             orientation=args.orientation or preset.orientation,
+            target_space=preset.target_space,
             margin_mm=preset.margin_mm,
             scale_mode=preset.scale_mode,
+            fixed_scale=preset.fixed_scale,
             default_line_width_pt=preset.default_line_width_pt,
             background_color=preset.background_color,
             default_stroke_color=preset.default_stroke_color,
+            color_mode=color_m,
             draw_annotations=preset.draw_annotations,
             draw_components=preset.draw_components,
+            draw_dimensions=draw_dims,
+            prune_outliers=prune_out,
+            custom_bbox=preset.custom_bbox,
             font_name=preset.font_name,
         )
 

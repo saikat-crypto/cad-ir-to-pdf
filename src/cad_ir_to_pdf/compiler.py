@@ -1,4 +1,4 @@
-﻿"""
+"""
 compiler.py — Core orchestrator compiling LAVINCI_CAD_IR_V3 to high-fidelity vector PDF.
 """
 
@@ -59,7 +59,12 @@ def compile_ir_to_pdf(
 
     # 3. Calculate Model Extents & Viewport Transform
     target_space = preset.target_space if preset.target_space != "all" else None
-    bbox = compute_ir_extents(ir_data, target_space=target_space)
+    bbox = compute_ir_extents(
+        ir_data,
+        target_space=target_space,
+        prune_outliers=preset.prune_outliers,
+        custom_bbox=preset.custom_bbox,
+    )
     page_w, page_h = preset.get_page_dimensions_pt()
     vp = calculate_viewport_mapping(
         cad_bbox=bbox,
@@ -209,14 +214,68 @@ def compile_ir_to_pdf(
                     transform=mat,
                 )
 
-    # 9. Render Annotations (Filtered by space)
+    # 9. Render Dimensions & Anonymous Dimension Blocks (*D...)
+    if preset.draw_dimensions:
+        block_defs = ir_data.get("block_definitions", {})
+        # A. Render anonymous dimension blocks (*D...)
+        for bname, bdata in block_defs.items():
+            if not bname.startswith("*D"):
+                continue
+            for bline in bdata.get("lines", []):
+                renderer.draw_line(
+                    start=bline.get("start", []),
+                    end=bline.get("end", []),
+                    color=bline.get("color"),
+                    layer=bline.get("layer", "dimension"),
+                )
+            for barc in bdata.get("arcs", []):
+                renderer.draw_arc(
+                    center=barc.get("center", []),
+                    radius=barc.get("radius", 0.0),
+                    start_angle_deg=barc.get("start_angle", 0.0),
+                    end_angle_deg=barc.get("end_angle", 360.0),
+                    color=barc.get("color"),
+                    layer=barc.get("layer", "dimension"),
+                )
+            for bcircle in bdata.get("circles", []):
+                renderer.draw_circle(
+                    center=bcircle.get("center", []),
+                    radius=bcircle.get("radius", 0.0),
+                    color=bcircle.get("color"),
+                    layer=bcircle.get("layer", "dimension"),
+                )
+            for bpline in bdata.get("polylines", []):
+                renderer.draw_polyline(
+                    points=bpline.get("points", []),
+                    is_closed=bpline.get("is_closed", False),
+                    color=bpline.get("color"),
+                    layer=bpline.get("layer", "dimension"),
+                )
+
+        # B. Render dimension measurement text labels
+        for dim in ir_data.get("dimensions", []):
+            if target_space and dim.get("space") and dim.get("space") != target_space:
+                continue
+            meas = dim.get("measurement")
+            dp = dim.get("defpoint")
+            dp2 = dim.get("defpoint2")
+            if meas is not None and dp and dp2:
+                renderer.draw_dimension_text(
+                    measurement=meas,
+                    defpoint=dp,
+                    defpoint2=dp2,
+                    override_text=dim.get("text"),
+                    layer=dim.get("layer", "dimension"),
+                )
+
+    # 10. Render Annotations (Filtered by space)
     if preset.draw_annotations:
         for annot in ir_data.get("annotations", []):
             if target_space and annot.get("space") and annot.get("space") != target_space:
                 continue
             txt = annot.get("clean_text") or annot.get("raw_text") or ""
             pos = annot.get("position", [0.0, 0.0])
-            h = annot.get("height", 0.2)
+            h = annot.get("height", 250.0)
             renderer.draw_annotation(
                 text=txt,
                 position=pos,
@@ -225,7 +284,7 @@ def compile_ir_to_pdf(
                 layer=annot.get("layer"),
             )
 
-    # 10. Save and Finish PDF
+    # 11. Save and Finish PDF
     c.showPage()
     c.save()
     return out_file
