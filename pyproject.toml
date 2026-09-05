@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cad-ir-to-pdf"
+version = "0.1.0"
+description = "High-fidelity vector CAD compiler converting La Vinci Intermediate Representation (IR v3) into publication-grade vector PDF drawings."
+readme = "README.md"
+authors = [{ name = "La Vinci Team" }]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "reportlab>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pymupdf>=1.20.0",
+]
+
+[project.scripts]
+cad-ir-to-pdf = "cad_ir_to_pdf.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
