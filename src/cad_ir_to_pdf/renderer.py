@@ -214,6 +214,9 @@ def sanitize_cad_text(text: Any) -> str:
     # Unicode replacement character for superscript 2 (e.g. Area, m²)
     txt = txt.replace("\ufffd", "\u00b2")
 
+    # Strip null bytes and C0 control characters except \n (newline) and \t (tab)
+    txt = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", txt)
+
     return txt
 
 

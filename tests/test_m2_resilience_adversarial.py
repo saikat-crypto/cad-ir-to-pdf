@@ -306,3 +306,55 @@ class TestPresetAndMarginRobustness:
         assert p2.margin_pt == 12.0 * (72.0 / 25.4)
         dims2 = p2.get_page_dimensions_pt()
         assert dims2 == (PAGE_SIZES_PORTRAIT["A3"][1], PAGE_SIZES_PORTRAIT["A3"][0])  # landscape default
+
+    def test_e2e_metadata_and_text_control_chars(self, tmp_path):
+        payload = {
+            "format": "LAVINCI_CAD_IR_V3",
+            "metadata": {
+                "source_file": "structural_blueprint.dwg\x00\x07",
+                "author": "Chief Engineer\x0b",
+                "subject": "Foundation Details\x1f",
+                "creator": "Custom CAD Exporter v2.0",
+            },
+            "annotations": [
+                {
+                    "clean_text": "Room 101\x00\x07\x1f - High Voltage",
+                    "position": [10.0, 10.0],
+                    "height": 5.0,
+                }
+            ],
+            "dimensions": [
+                {
+                    "measurement": 1500.0,
+                    "defpoint": [0.0, 0.0],
+                    "defpoint2": [1500.0, 0.0],
+                    "text": "1500 mm\x00\x05",
+                }
+            ],
+            "geometry_primitives": {
+                "primitives": {
+                    "lines": [{"start": [0.0, 0.0], "end": [1500.0, 0.0]}]
+                }
+            },
+        }
+        out_pdf = tmp_path / "metadata_ctrl_chars.pdf"
+        compile_ir_to_pdf(payload, out_pdf)
+        assert_valid_iso32000_pdf(out_pdf)
+
+        doc = pymupdf.open(str(out_pdf))
+        try:
+            meta = doc.metadata
+            assert meta.get("title") == "structural_blueprint.dwg"
+            assert meta.get("author") == "Chief Engineer"
+            assert meta.get("subject") == "Foundation Details"
+            assert meta.get("creator") == "Custom CAD Exporter v2.0"
+
+            txt = doc[0].get_text()
+            assert "\x00" not in txt
+            assert "\x07" not in txt
+            assert "\x1f" not in txt
+            assert "Room 101 - High Voltage" in txt
+            assert "1500 mm" in txt
+        finally:
+            doc.close()
+

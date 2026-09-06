@@ -89,34 +89,6 @@ def compile_ir_to_pdf(
 
     # 4. Initialize ReportLab Canvas (Feature 11)
     c = canvas.Canvas(str(out_file), pagesize=(page_w, page_h))
-    metadata = ir_data.get("metadata") or {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-    src_file_meta = metadata.get("source_file")
-    author_meta = metadata.get("author")
-    safe_title = sanitize_metadata_string(src_file_meta, default="La Vinci CAD Drawing")
-    safe_author = sanitize_metadata_string(author_meta, default="La Vinci Engine")
-
-    try:
-        c.setTitle(safe_title)
-    except Exception:
-        try:
-            c.setTitle("La Vinci CAD Drawing")
-        except Exception:
-            pass
-
-    try:
-        c.setAuthor(safe_author)
-    except Exception:
-        try:
-            c.setAuthor("La Vinci Engine")
-        except Exception:
-            pass
-
-    try:
-        c.setCreator("cad-ir-to-pdf (La Vinci CAD Compiler)")
-    except Exception:
-        pass
 
     # 5. Draw Background if configured
     if preset.background_color:
@@ -130,6 +102,17 @@ def compile_ir_to_pdf(
         viewport=vp,
         preset=preset,
         layer_color_map=layer_colors,
+    )
+
+    # Set document metadata safely via renderer helper (Feature 11)
+    metadata = ir_data.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    renderer.set_document_metadata(
+        title=metadata.get("source_file"),
+        author=metadata.get("author"),
+        subject=metadata.get("subject"),
+        creator=metadata.get("creator") or "cad-ir-to-pdf (La Vinci CAD Compiler)",
     )
 
     # 7. Render Top-Level Geometry Primitives (filtered by space)
