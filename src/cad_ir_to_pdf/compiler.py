@@ -91,7 +91,7 @@ def compile_ir_to_pdf(
 
     # 5. Draw Background if configured
     if preset.background_color:
-        bg_col = colors.HexColor(preset.background_color)
+        bg_col = hex_to_pdf_color(preset.background_color, fallback="#FFFFFF")
         c.setFillColor(bg_col)
         c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
 

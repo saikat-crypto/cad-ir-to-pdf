@@ -184,6 +184,10 @@ def calculate_arc_bbox(
         pt_y = cy + r * math.sin(sa_rad)
         return (pt_x, pt_y, pt_x, pt_y)
 
+    sweep = ea_deg - sa_deg
+    if abs(sweep) >= 360.0 or (sweep > 0 and abs(sweep % 360.0) < 1e-6):
+        return (cx - r, cy - r, cx + r, cy + r)
+
     sa = sa_deg % 360.0
     ea = ea_deg % 360.0
     sa_rad = math.radians(sa_deg)

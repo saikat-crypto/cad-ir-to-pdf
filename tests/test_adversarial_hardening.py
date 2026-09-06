@@ -114,9 +114,32 @@ def test_calculate_arc_bbox_nan_inf():
     assert all(math.isfinite(v) for v in bbox)
 
 
+def test_calculate_arc_bbox_full_sweep():
+    # Full circle 360-degree sweep must yield full diameter extents, not a point
+    bbox_360 = calculate_arc_bbox(cx=100.0, cy=200.0, r=50.0, sa_deg=0.0, ea_deg=360.0)
+    assert bbox_360 == (50.0, 150.0, 150.0, 250.0)
+
+    bbox_multi = calculate_arc_bbox(cx=100.0, cy=200.0, r=50.0, sa_deg=10.0, ea_deg=370.0)
+    assert bbox_multi == (50.0, 150.0, 150.0, 250.0)
+
+
 # =========================================================================
-# 4. Dimension Text & Font Resilience
+# 4. Dimension Text, Font & Preset Resilience
 # =========================================================================
+
+def test_compiler_with_invalid_background_color(tmp_path):
+    bad_bg_preset = PdfPreset(
+        name="bad-bg",
+        background_color="NOT_A_VALID_HEX",
+    )
+    ir_data = {
+        "format": "LAVINCI_CAD_IR_V3",
+        "geometry_primitives": {"primitives": {"lines": [{"start": [0, 0], "end": [10, 10]}]}},
+    }
+    out_pdf = tmp_path / "bad_bg.pdf"
+    res = compile_ir_to_pdf(ir_data, out_pdf, preset=bad_bg_preset)
+    assert res.exists()
+    assert res.stat().st_size > 300
 
 def test_compiler_with_invalid_font_preset(tmp_path):
     # Custom preset specifying an unregistered or non-existent font
