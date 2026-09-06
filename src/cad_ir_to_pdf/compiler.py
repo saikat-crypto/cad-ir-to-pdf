@@ -18,7 +18,12 @@ from .geometry import (
     calculate_viewport_mapping,
     compute_ir_extents,
 )
-from .renderer import PdfVectorRenderer, hex_to_pdf_color
+from .renderer import (
+    PdfVectorRenderer,
+    coerce_metadata_str,
+    hex_to_pdf_color,
+    sanitize_metadata_string,
+)
 
 
 def compile_ir_to_pdf(
@@ -82,16 +87,36 @@ def compile_ir_to_pdf(
     out_file = Path(output_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # 4. Initialize ReportLab Canvas
+    # 4. Initialize ReportLab Canvas (Feature 11)
     c = canvas.Canvas(str(out_file), pagesize=(page_w, page_h))
     metadata = ir_data.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-    src_file_meta = metadata.get("source_file", "La Vinci CAD Drawing")
-    author_meta = metadata.get("author", "La Vinci Engine")
-    c.setTitle(str(src_file_meta) if src_file_meta is not None else "La Vinci CAD Drawing")
-    c.setAuthor(str(author_meta) if author_meta is not None else "La Vinci Engine")
-    c.setCreator("cad-ir-to-pdf (La Vinci CAD Compiler)")
+    src_file_meta = metadata.get("source_file")
+    author_meta = metadata.get("author")
+    safe_title = sanitize_metadata_string(src_file_meta, default="La Vinci CAD Drawing")
+    safe_author = sanitize_metadata_string(author_meta, default="La Vinci Engine")
+
+    try:
+        c.setTitle(safe_title)
+    except Exception:
+        try:
+            c.setTitle("La Vinci CAD Drawing")
+        except Exception:
+            pass
+
+    try:
+        c.setAuthor(safe_author)
+    except Exception:
+        try:
+            c.setAuthor("La Vinci Engine")
+        except Exception:
+            pass
+
+    try:
+        c.setCreator("cad-ir-to-pdf (La Vinci CAD Compiler)")
+    except Exception:
+        pass
 
     # 5. Draw Background if configured
     if preset.background_color:
@@ -122,6 +147,7 @@ def compile_ir_to_pdf(
                 end=line.get("end", []),
                 color=line.get("color"),
                 layer=line.get("layer"),
+                line_width=line.get("line_width"),
             )
 
         raw_arcs = geom_prims.get("arcs")
@@ -137,6 +163,7 @@ def compile_ir_to_pdf(
                 end_angle_deg=arc.get("end_angle", 360.0),
                 color=arc.get("color"),
                 layer=arc.get("layer"),
+                line_width=arc.get("line_width"),
             )
 
         raw_circles = geom_prims.get("circles")
@@ -150,6 +177,7 @@ def compile_ir_to_pdf(
                 radius=circle.get("radius", 0.0),
                 color=circle.get("color"),
                 layer=circle.get("layer"),
+                line_width=circle.get("line_width"),
             )
 
         raw_plines = geom_prims.get("polylines")
@@ -163,6 +191,7 @@ def compile_ir_to_pdf(
                 is_closed=bool(pline.get("is_closed", False)),
                 color=pline.get("color"),
                 layer=pline.get("layer"),
+                line_width=pline.get("line_width"),
             )
 
     # 8. Render Block Component Instances (Filtered by space)
@@ -219,6 +248,7 @@ def compile_ir_to_pdf(
                         end=bline.get("end", []),
                         color=bline.get("color"),
                         layer=bline.get("layer") or comp_layer,
+                        line_width=bline.get("line_width"),
                         transform=mat,
                     )
 
@@ -243,6 +273,7 @@ def compile_ir_to_pdf(
                         end_angle_deg=ea_f,
                         color=barc.get("color"),
                         layer=barc.get("layer") or comp_layer,
+                        line_width=barc.get("line_width"),
                     )
 
                 raw_bcircles = bdata.get("circles")
@@ -260,6 +291,7 @@ def compile_ir_to_pdf(
                         radius=r,
                         color=bcircle.get("color"),
                         layer=bcircle.get("layer") or comp_layer,
+                        line_width=bcircle.get("line_width"),
                     )
 
                 raw_bplines = bdata.get("polylines")
@@ -271,6 +303,7 @@ def compile_ir_to_pdf(
                         is_closed=bool(bpline.get("is_closed", False)),
                         color=bpline.get("color"),
                         layer=bpline.get("layer") or comp_layer,
+                        line_width=bpline.get("line_width"),
                         transform=mat,
                     )
 
@@ -291,6 +324,7 @@ def compile_ir_to_pdf(
                     end=bline.get("end", []),
                     color=bline.get("color"),
                     layer=bline.get("layer", "dimension"),
+                    line_width=bline.get("line_width"),
                 )
             raw_darcs = bdata.get("arcs")
             for barc in (raw_darcs if isinstance(raw_darcs, (list, tuple)) else []):
@@ -303,6 +337,7 @@ def compile_ir_to_pdf(
                     end_angle_deg=barc.get("end_angle", 360.0),
                     color=barc.get("color"),
                     layer=barc.get("layer", "dimension"),
+                    line_width=barc.get("line_width"),
                 )
             raw_dcircles = bdata.get("circles")
             for bcircle in (raw_dcircles if isinstance(raw_dcircles, (list, tuple)) else []):
@@ -313,6 +348,7 @@ def compile_ir_to_pdf(
                     radius=bcircle.get("radius", 0.0),
                     color=bcircle.get("color"),
                     layer=bcircle.get("layer", "dimension"),
+                    line_width=bcircle.get("line_width"),
                 )
             raw_dplines = bdata.get("polylines")
             for bpline in (raw_dplines if isinstance(raw_dplines, (list, tuple)) else []):
@@ -323,6 +359,7 @@ def compile_ir_to_pdf(
                     is_closed=bool(bpline.get("is_closed", False)),
                     color=bpline.get("color"),
                     layer=bpline.get("layer", "dimension"),
+                    line_width=bpline.get("line_width"),
                 )
 
         # B. Render dimension measurement text labels

@@ -3,12 +3,23 @@ config.py — Preset and configuration architecture for CAD IR to PDF compiler.
 """
 
 from __future__ import annotations
+import math
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 # PostScript points per unit (1 inch = 72 pt, 1 mm = 72 / 25.4 pt = 2.83464567 pt)
 PT_PER_MM = 72.0 / 25.4
 PT_PER_INCH = 72.0
+
+# Line weight clamping bounds in PostScript points (Feature 13 / INV-18)
+MIN_LINE_WIDTH_PT: float = 0.05
+MAX_LINE_WIDTH_PT: float = 50.0
+DEFAULT_LINE_WIDTH_PT: float = 0.35
+
+# Font size clamping bounds in PostScript points (Feature 14 / INV-19)
+MIN_FONT_SIZE_PT: float = 1.0
+MAX_FONT_SIZE_PT: float = 144.0
+DEFAULT_FONT_NAME: str = "Helvetica"
 
 # Standard Paper Sizes in Points (Width x Height, Portrait)
 PAGE_SIZES_PORTRAIT: Dict[str, Tuple[float, float]] = {
@@ -31,7 +42,7 @@ class PdfPreset:
     margin_mm: float = 12.0              # Border margin
     scale_mode: str = "fit"              # "fit" (isotropic auto-fit) or "fixed"
     fixed_scale: Optional[float] = None  # e.g., 0.02 for 1:50
-    default_line_width_pt: float = 0.35  # Base line weight in points (clean blueprint weight)
+    default_line_width_pt: float = DEFAULT_LINE_WIDTH_PT  # Base line weight in points (clean blueprint weight)
     background_color: Optional[str] = "#FFFFFF"  # White page background
     default_stroke_color: str = "#000000"        # Crisp architectural black
     color_mode: str = "monochrome"       # "monochrome" (pure black plot), "layer_color", or "true_color"
@@ -40,21 +51,40 @@ class PdfPreset:
     draw_dimensions: bool = True         # Render dimension blocks and measurement text
     prune_outliers: bool = True          # Automatically prune isolated scratch geometry voids
     custom_bbox: Optional[Tuple[float, float, float, float]] = None  # (min_x, min_y, max_x, max_y)
-    font_name: str = "Helvetica"         # Standard PDF embedded sans-serif font
+    font_name: str = DEFAULT_FONT_NAME   # Standard PDF embedded sans-serif font
+
+    def __post_init__(self) -> None:
+        """Sanitizes preset fields against malformed or whitespace inputs (Feature 14)."""
+        if not isinstance(self.font_name, str) or not self.font_name.strip():
+            self.font_name = DEFAULT_FONT_NAME
+        else:
+            self.font_name = self.font_name.strip()
 
     def get_page_dimensions_pt(self) -> Tuple[float, float]:
-        """Returns (width_pt, height_pt) taking orientation into account."""
-        base_size = PAGE_SIZES_PORTRAIT.get(self.paper_size.upper())
-        if not base_size:
-            base_size = PAGE_SIZES_PORTRAIT["A3"]
+        """Returns (width_pt, height_pt) taking orientation into account, safely handling non-string/None."""
+        paper_key = "A3"
+        if isinstance(self.paper_size, str) and self.paper_size.strip():
+            paper_key = self.paper_size.strip().upper()
+        base_size = PAGE_SIZES_PORTRAIT.get(paper_key, PAGE_SIZES_PORTRAIT["A3"])
         w, h = base_size
-        if self.orientation.lower() == "landscape":
+        orient = self.orientation.lower().strip() if isinstance(self.orientation, str) else "landscape"
+        if orient == "landscape":
             return (max(w, h), min(w, h))
         return (min(w, h), max(w, h))
 
     @property
     def margin_pt(self) -> float:
-        return self.margin_mm * PT_PER_MM
+        """Returns margin in points, guarded against non-finite, negative, or non-numeric margin_mm."""
+        mm = self.margin_mm
+        if not isinstance(mm, (int, float)) or isinstance(mm, bool):
+            mm = 12.0
+        try:
+            f = float(mm)
+            if not math.isfinite(f) or f < 0.0:
+                f = 12.0
+            return max(0.0, min(100.0, f)) * PT_PER_MM
+        except (OverflowError, TypeError, ValueError):
+            return 12.0 * PT_PER_MM
 
 # Canonical Master Presets
 ARCHITECTURAL_MONOCHROME_PRESET = PdfPreset(
