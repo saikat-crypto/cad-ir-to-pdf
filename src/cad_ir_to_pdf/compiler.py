@@ -51,13 +51,15 @@ def compile_ir_to_pdf(
 
     # 2. Extract Layer Color Map
     layer_colors: Dict[str, str] = {}
-    for layer in (ir_data.get("layers") or []):
-        if not isinstance(layer, dict):
-            continue
-        name = layer.get("name")
-        hex_c = layer.get("hex_color")
-        if name and hex_c:
-            layer_colors[name] = hex_c
+    raw_layers = ir_data.get("layers")
+    if isinstance(raw_layers, (list, tuple)):
+        for layer in raw_layers:
+            if not isinstance(layer, dict):
+                continue
+            name = layer.get("name")
+            hex_c = layer.get("hex_color")
+            if isinstance(name, str) and isinstance(hex_c, str):
+                layer_colors[name] = hex_c
 
     # 3. Calculate Model Extents & Viewport Transform
     target_space = preset.target_space if preset.target_space != "all" else None
@@ -85,8 +87,10 @@ def compile_ir_to_pdf(
     metadata = ir_data.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-    c.setTitle(metadata.get("source_file", "La Vinci CAD Drawing"))
-    c.setAuthor(metadata.get("author", "La Vinci Engine"))
+    src_file_meta = metadata.get("source_file", "La Vinci CAD Drawing")
+    author_meta = metadata.get("author", "La Vinci Engine")
+    c.setTitle(str(src_file_meta) if src_file_meta is not None else "La Vinci CAD Drawing")
+    c.setAuthor(str(author_meta) if author_meta is not None else "La Vinci Engine")
     c.setCreator("cad-ir-to-pdf (La Vinci CAD Compiler)")
 
     # 5. Draw Background if configured
@@ -107,7 +111,8 @@ def compile_ir_to_pdf(
     raw_geom = ir_data.get("geometry_primitives") or {}
     geom_prims = (raw_geom.get("primitives") or {}) if isinstance(raw_geom, dict) else {}
     if isinstance(geom_prims, dict):
-        for line in (geom_prims.get("lines") or []):
+        raw_lines = geom_prims.get("lines")
+        for line in (raw_lines if isinstance(raw_lines, (list, tuple)) else []):
             if not isinstance(line, dict):
                 continue
             if target_space and line.get("space") and line.get("space") != target_space:
@@ -119,7 +124,8 @@ def compile_ir_to_pdf(
                 layer=line.get("layer"),
             )
 
-        for arc in (geom_prims.get("arcs") or []):
+        raw_arcs = geom_prims.get("arcs")
+        for arc in (raw_arcs if isinstance(raw_arcs, (list, tuple)) else []):
             if not isinstance(arc, dict):
                 continue
             if target_space and arc.get("space") and arc.get("space") != target_space:
@@ -133,7 +139,8 @@ def compile_ir_to_pdf(
                 layer=arc.get("layer"),
             )
 
-        for circle in (geom_prims.get("circles") or []):
+        raw_circles = geom_prims.get("circles")
+        for circle in (raw_circles if isinstance(raw_circles, (list, tuple)) else []):
             if not isinstance(circle, dict):
                 continue
             if target_space and circle.get("space") and circle.get("space") != target_space:
@@ -145,7 +152,8 @@ def compile_ir_to_pdf(
                 layer=circle.get("layer"),
             )
 
-        for pline in (geom_prims.get("polylines") or []):
+        raw_plines = geom_prims.get("polylines")
+        for pline in (raw_plines if isinstance(raw_plines, (list, tuple)) else []):
             if not isinstance(pline, dict):
                 continue
             if target_space and pline.get("space") and pline.get("space") != target_space:
@@ -202,7 +210,8 @@ def compile_ir_to_pdf(
                 # Scale factor for radii under non-uniform scaling (average scale)
                 effective_scale = (abs(sx) + abs(sy)) / 2.0
 
-                for bline in (bdata.get("lines") or []):
+                raw_blines = bdata.get("lines")
+                for bline in (raw_blines if isinstance(raw_blines, (list, tuple)) else []):
                     if not isinstance(bline, dict):
                         continue
                     renderer.draw_line(
@@ -213,7 +222,8 @@ def compile_ir_to_pdf(
                         transform=mat,
                     )
 
-                for barc in (bdata.get("arcs") or []):
+                raw_barcs = bdata.get("arcs")
+                for barc in (raw_barcs if isinstance(raw_barcs, (list, tuple)) else []):
                     if not isinstance(barc, dict):
                         continue
                     orig_r = barc.get("radius", 0.0)
@@ -235,7 +245,8 @@ def compile_ir_to_pdf(
                         layer=barc.get("layer") or comp_layer,
                     )
 
-                for bcircle in (bdata.get("circles") or []):
+                raw_bcircles = bdata.get("circles")
+                for bcircle in (raw_bcircles if isinstance(raw_bcircles, (list, tuple)) else []):
                     if not isinstance(bcircle, dict):
                         continue
                     orig_r = bcircle.get("radius", 0.0)
@@ -251,7 +262,8 @@ def compile_ir_to_pdf(
                         layer=bcircle.get("layer") or comp_layer,
                     )
 
-                for bpline in (bdata.get("polylines") or []):
+                raw_bplines = bdata.get("polylines")
+                for bpline in (raw_bplines if isinstance(raw_bplines, (list, tuple)) else []):
                     if not isinstance(bpline, dict):
                         continue
                     renderer.draw_polyline(
@@ -270,7 +282,8 @@ def compile_ir_to_pdf(
         for bname, bdata in block_defs.items():
             if not isinstance(bname, str) or not bname.startswith("*D") or not isinstance(bdata, dict):
                 continue
-            for bline in (bdata.get("lines") or []):
+            raw_dlines = bdata.get("lines")
+            for bline in (raw_dlines if isinstance(raw_dlines, (list, tuple)) else []):
                 if not isinstance(bline, dict):
                     continue
                 renderer.draw_line(
@@ -279,7 +292,8 @@ def compile_ir_to_pdf(
                     color=bline.get("color"),
                     layer=bline.get("layer", "dimension"),
                 )
-            for barc in (bdata.get("arcs") or []):
+            raw_darcs = bdata.get("arcs")
+            for barc in (raw_darcs if isinstance(raw_darcs, (list, tuple)) else []):
                 if not isinstance(barc, dict):
                     continue
                 renderer.draw_arc(
@@ -290,7 +304,8 @@ def compile_ir_to_pdf(
                     color=barc.get("color"),
                     layer=barc.get("layer", "dimension"),
                 )
-            for bcircle in (bdata.get("circles") or []):
+            raw_dcircles = bdata.get("circles")
+            for bcircle in (raw_dcircles if isinstance(raw_dcircles, (list, tuple)) else []):
                 if not isinstance(bcircle, dict):
                     continue
                 renderer.draw_circle(
@@ -299,7 +314,8 @@ def compile_ir_to_pdf(
                     color=bcircle.get("color"),
                     layer=bcircle.get("layer", "dimension"),
                 )
-            for bpline in (bdata.get("polylines") or []):
+            raw_dplines = bdata.get("polylines")
+            for bpline in (raw_dplines if isinstance(raw_dplines, (list, tuple)) else []):
                 if not isinstance(bpline, dict):
                     continue
                 renderer.draw_polyline(
