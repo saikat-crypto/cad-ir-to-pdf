@@ -51,7 +51,9 @@ def compile_ir_to_pdf(
 
     # 2. Extract Layer Color Map
     layer_colors: Dict[str, str] = {}
-    for layer in ir_data.get("layers", []):
+    for layer in (ir_data.get("layers") or []):
+        if not isinstance(layer, dict):
+            continue
         name = layer.get("name")
         hex_c = layer.get("hex_color")
         if name and hex_c:
@@ -80,8 +82,11 @@ def compile_ir_to_pdf(
 
     # 4. Initialize ReportLab Canvas
     c = canvas.Canvas(str(out_file), pagesize=(page_w, page_h))
-    c.setTitle(ir_data.get("metadata", {}).get("source_file", "La Vinci CAD Drawing"))
-    c.setAuthor(ir_data.get("metadata", {}).get("author", "La Vinci Engine"))
+    metadata = ir_data.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    c.setTitle(metadata.get("source_file", "La Vinci CAD Drawing"))
+    c.setAuthor(metadata.get("author", "La Vinci Engine"))
     c.setCreator("cad-ir-to-pdf (La Vinci CAD Compiler)")
 
     # 5. Draw Background if configured
@@ -99,136 +104,184 @@ def compile_ir_to_pdf(
     )
 
     # 7. Render Top-Level Geometry Primitives (filtered by space)
-    prims = ir_data.get("geometry_primitives", {}).get("primitives", {})
-    for line in prims.get("lines", []):
-        if target_space and line.get("space") and line.get("space") != target_space:
-            continue
-        renderer.draw_line(
-            start=line.get("start", []),
-            end=line.get("end", []),
-            color=line.get("color"),
-            layer=line.get("layer"),
-        )
+    raw_geom = ir_data.get("geometry_primitives") or {}
+    geom_prims = (raw_geom.get("primitives") or {}) if isinstance(raw_geom, dict) else {}
+    if isinstance(geom_prims, dict):
+        for line in (geom_prims.get("lines") or []):
+            if not isinstance(line, dict):
+                continue
+            if target_space and line.get("space") and line.get("space") != target_space:
+                continue
+            renderer.draw_line(
+                start=line.get("start", []),
+                end=line.get("end", []),
+                color=line.get("color"),
+                layer=line.get("layer"),
+            )
 
-    for arc in prims.get("arcs", []):
-        if target_space and arc.get("space") and arc.get("space") != target_space:
-            continue
-        renderer.draw_arc(
-            center=arc.get("center", []),
-            radius=arc.get("radius", 0.0),
-            start_angle_deg=arc.get("start_angle", 0.0),
-            end_angle_deg=arc.get("end_angle", 360.0),
-            color=arc.get("color"),
-            layer=arc.get("layer"),
-        )
+        for arc in (geom_prims.get("arcs") or []):
+            if not isinstance(arc, dict):
+                continue
+            if target_space and arc.get("space") and arc.get("space") != target_space:
+                continue
+            renderer.draw_arc(
+                center=arc.get("center", []),
+                radius=arc.get("radius", 0.0),
+                start_angle_deg=arc.get("start_angle", 0.0),
+                end_angle_deg=arc.get("end_angle", 360.0),
+                color=arc.get("color"),
+                layer=arc.get("layer"),
+            )
 
-    for circle in prims.get("circles", []):
-        if target_space and circle.get("space") and circle.get("space") != target_space:
-            continue
-        renderer.draw_circle(
-            center=circle.get("center", []),
-            radius=circle.get("radius", 0.0),
-            color=circle.get("color"),
-            layer=circle.get("layer"),
-        )
+        for circle in (geom_prims.get("circles") or []):
+            if not isinstance(circle, dict):
+                continue
+            if target_space and circle.get("space") and circle.get("space") != target_space:
+                continue
+            renderer.draw_circle(
+                center=circle.get("center", []),
+                radius=circle.get("radius", 0.0),
+                color=circle.get("color"),
+                layer=circle.get("layer"),
+            )
 
-    for pline in prims.get("polylines", []):
-        if target_space and pline.get("space") and pline.get("space") != target_space:
-            continue
-        renderer.draw_polyline(
-            points=pline.get("points", []),
-            is_closed=pline.get("is_closed", False),
-            color=pline.get("color"),
-            layer=pline.get("layer"),
-        )
+        for pline in (geom_prims.get("polylines") or []):
+            if not isinstance(pline, dict):
+                continue
+            if target_space and pline.get("space") and pline.get("space") != target_space:
+                continue
+            renderer.draw_polyline(
+                points=pline.get("points", []),
+                is_closed=bool(pline.get("is_closed", False)),
+                color=pline.get("color"),
+                layer=pline.get("layer"),
+            )
 
     # 8. Render Block Component Instances (Filtered by space)
     if preset.draw_components:
-        block_defs = ir_data.get("block_definitions", {})
-        components = ir_data.get("components", [])
+        raw_block_defs = ir_data.get("block_definitions") or {}
+        block_defs = raw_block_defs if isinstance(raw_block_defs, dict) else {}
+        components = ir_data.get("components") or []
 
-        for comp in components:
-            if target_space and comp.get("space") and comp.get("space") != target_space:
-                continue
+        if isinstance(components, (list, tuple)):
+            for comp in components:
+                if not isinstance(comp, dict):
+                    continue
+                if target_space and comp.get("space") and comp.get("space") != target_space:
+                    continue
 
-            bname = comp.get("block_name") or comp.get("resolved_name")
-            bdata = block_defs.get(bname)
-            if not bdata:
-                continue
+                bname = comp.get("block_name") or comp.get("resolved_name")
+                bdata = block_defs.get(bname)
+                if not isinstance(bdata, dict):
+                    continue
 
-            pos = comp.get("position", [0.0, 0.0, 0.0])
-            rot = comp.get("rotation", 0.0)
-            scale = comp.get("scale", [1.0, 1.0, 1.0])
-            base_pt = bdata.get("base_point", [0.0, 0.0, 0.0])
-            comp_layer = comp.get("layer")
+                pos = comp.get("position") or [0.0, 0.0, 0.0]
+                rot = comp.get("rotation", 0.0)
+                scale = comp.get("scale") or [1.0, 1.0, 1.0]
+                base_pt = bdata.get("base_point") or [0.0, 0.0, 0.0]
+                comp_layer = comp.get("layer")
 
-            mat = AffineMatrix2D.from_cad_insert(
-                pos_x=pos[0],
-                pos_y=pos[1],
-                rotation_deg=rot,
-                scale_x=scale[0] if len(scale) > 0 else 1.0,
-                scale_y=scale[1] if len(scale) > 1 else 1.0,
-                base_x=base_pt[0],
-                base_y=base_pt[1],
-            )
+                sx = scale[0] if (isinstance(scale, (list, tuple)) and len(scale) > 0 and isinstance(scale[0], (int, float))) else 1.0
+                sy = scale[1] if (isinstance(scale, (list, tuple)) and len(scale) > 1 and isinstance(scale[1], (int, float))) else 1.0
+                px = pos[0] if (isinstance(pos, (list, tuple)) and len(pos) > 0 and isinstance(pos[0], (int, float))) else 0.0
+                py = pos[1] if (isinstance(pos, (list, tuple)) and len(pos) > 1 and isinstance(pos[1], (int, float))) else 0.0
+                bx = base_pt[0] if (isinstance(base_pt, (list, tuple)) and len(base_pt) > 0 and isinstance(base_pt[0], (int, float))) else 0.0
+                by = base_pt[1] if (isinstance(base_pt, (list, tuple)) and len(base_pt) > 1 and isinstance(base_pt[1], (int, float))) else 0.0
+                rot_f = rot if (isinstance(rot, (int, float))) else 0.0
 
-            for bline in bdata.get("lines", []):
-                renderer.draw_line(
-                    start=bline.get("start", []),
-                    end=bline.get("end", []),
-                    color=bline.get("color"),
-                    layer=bline.get("layer") or comp_layer,
-                    transform=mat,
+                mat = AffineMatrix2D.from_cad_insert(
+                    pos_x=px,
+                    pos_y=py,
+                    rotation_deg=rot_f,
+                    scale_x=sx,
+                    scale_y=sy,
+                    base_x=bx,
+                    base_y=by,
                 )
 
-            for barc in bdata.get("arcs", []):
-                r = barc.get("radius", 0.0) * abs(scale[0] if len(scale) > 0 else 1.0)
-                ac = barc.get("center", [0.0, 0.0])
-                tx_c = mat.transform_point(ac[0], ac[1])
-                renderer.draw_arc(
-                    center=[tx_c[0], tx_c[1]],
-                    radius=r,
-                    start_angle_deg=barc.get("start_angle", 0.0) + rot,
-                    end_angle_deg=barc.get("end_angle", 360.0) + rot,
-                    color=barc.get("color"),
-                    layer=barc.get("layer") or comp_layer,
-                )
+                # Scale factor for radii under non-uniform scaling (average scale)
+                effective_scale = (abs(sx) + abs(sy)) / 2.0
 
-            for bcircle in bdata.get("circles", []):
-                r = bcircle.get("radius", 0.0) * abs(scale[0] if len(scale) > 0 else 1.0)
-                cc = bcircle.get("center", [0.0, 0.0])
-                tx_c = mat.transform_point(cc[0], cc[1])
-                renderer.draw_circle(
-                    center=[tx_c[0], tx_c[1]],
-                    radius=r,
-                    color=bcircle.get("color"),
-                    layer=bcircle.get("layer") or comp_layer,
-                )
+                for bline in (bdata.get("lines") or []):
+                    if not isinstance(bline, dict):
+                        continue
+                    renderer.draw_line(
+                        start=bline.get("start", []),
+                        end=bline.get("end", []),
+                        color=bline.get("color"),
+                        layer=bline.get("layer") or comp_layer,
+                        transform=mat,
+                    )
 
-            for bpline in bdata.get("polylines", []):
-                renderer.draw_polyline(
-                    points=bpline.get("points", []),
-                    is_closed=bpline.get("is_closed", False),
-                    color=bpline.get("color"),
-                    layer=bpline.get("layer") or comp_layer,
-                    transform=mat,
-                )
+                for barc in (bdata.get("arcs") or []):
+                    if not isinstance(barc, dict):
+                        continue
+                    orig_r = barc.get("radius", 0.0)
+                    r = orig_r * effective_scale if (isinstance(orig_r, (int, float))) else 0.0
+                    ac = barc.get("center") or [0.0, 0.0]
+                    acx = ac[0] if (isinstance(ac, (list, tuple)) and len(ac) > 0 and isinstance(ac[0], (int, float))) else 0.0
+                    acy = ac[1] if (isinstance(ac, (list, tuple)) and len(ac) > 1 and isinstance(ac[1], (int, float))) else 0.0
+                    tx_c = mat.transform_point(acx, acy)
+                    sa = barc.get("start_angle", 0.0)
+                    ea = barc.get("end_angle", 360.0)
+                    sa_f = (sa if isinstance(sa, (int, float)) else 0.0) + rot_f
+                    ea_f = (ea if isinstance(ea, (int, float)) else 360.0) + rot_f
+                    renderer.draw_arc(
+                        center=[tx_c[0], tx_c[1]],
+                        radius=r,
+                        start_angle_deg=sa_f,
+                        end_angle_deg=ea_f,
+                        color=barc.get("color"),
+                        layer=barc.get("layer") or comp_layer,
+                    )
+
+                for bcircle in (bdata.get("circles") or []):
+                    if not isinstance(bcircle, dict):
+                        continue
+                    orig_r = bcircle.get("radius", 0.0)
+                    r = orig_r * effective_scale if (isinstance(orig_r, (int, float))) else 0.0
+                    cc = bcircle.get("center") or [0.0, 0.0]
+                    ccx = cc[0] if (isinstance(cc, (list, tuple)) and len(cc) > 0 and isinstance(cc[0], (int, float))) else 0.0
+                    ccy = cc[1] if (isinstance(cc, (list, tuple)) and len(cc) > 1 and isinstance(cc[1], (int, float))) else 0.0
+                    tx_c = mat.transform_point(ccx, ccy)
+                    renderer.draw_circle(
+                        center=[tx_c[0], tx_c[1]],
+                        radius=r,
+                        color=bcircle.get("color"),
+                        layer=bcircle.get("layer") or comp_layer,
+                    )
+
+                for bpline in (bdata.get("polylines") or []):
+                    if not isinstance(bpline, dict):
+                        continue
+                    renderer.draw_polyline(
+                        points=bpline.get("points", []),
+                        is_closed=bool(bpline.get("is_closed", False)),
+                        color=bpline.get("color"),
+                        layer=bpline.get("layer") or comp_layer,
+                        transform=mat,
+                    )
 
     # 9. Render Dimensions & Anonymous Dimension Blocks (*D...)
     if preset.draw_dimensions:
-        block_defs = ir_data.get("block_definitions", {})
+        raw_block_defs = ir_data.get("block_definitions") or {}
+        block_defs = raw_block_defs if isinstance(raw_block_defs, dict) else {}
         # A. Render anonymous dimension blocks (*D...)
         for bname, bdata in block_defs.items():
-            if not bname.startswith("*D"):
+            if not isinstance(bname, str) or not bname.startswith("*D") or not isinstance(bdata, dict):
                 continue
-            for bline in bdata.get("lines", []):
+            for bline in (bdata.get("lines") or []):
+                if not isinstance(bline, dict):
+                    continue
                 renderer.draw_line(
                     start=bline.get("start", []),
                     end=bline.get("end", []),
                     color=bline.get("color"),
                     layer=bline.get("layer", "dimension"),
                 )
-            for barc in bdata.get("arcs", []):
+            for barc in (bdata.get("arcs") or []):
+                if not isinstance(barc, dict):
+                    continue
                 renderer.draw_arc(
                     center=barc.get("center", []),
                     radius=barc.get("radius", 0.0),
@@ -237,52 +290,64 @@ def compile_ir_to_pdf(
                     color=barc.get("color"),
                     layer=barc.get("layer", "dimension"),
                 )
-            for bcircle in bdata.get("circles", []):
+            for bcircle in (bdata.get("circles") or []):
+                if not isinstance(bcircle, dict):
+                    continue
                 renderer.draw_circle(
                     center=bcircle.get("center", []),
                     radius=bcircle.get("radius", 0.0),
                     color=bcircle.get("color"),
                     layer=bcircle.get("layer", "dimension"),
                 )
-            for bpline in bdata.get("polylines", []):
+            for bpline in (bdata.get("polylines") or []):
+                if not isinstance(bpline, dict):
+                    continue
                 renderer.draw_polyline(
                     points=bpline.get("points", []),
-                    is_closed=bpline.get("is_closed", False),
+                    is_closed=bool(bpline.get("is_closed", False)),
                     color=bpline.get("color"),
                     layer=bpline.get("layer", "dimension"),
                 )
 
         # B. Render dimension measurement text labels
-        for dim in ir_data.get("dimensions", []):
-            if target_space and dim.get("space") and dim.get("space") != target_space:
-                continue
-            meas = dim.get("measurement")
-            dp = dim.get("defpoint")
-            dp2 = dim.get("defpoint2")
-            if meas is not None and dp and dp2:
-                renderer.draw_dimension_text(
-                    measurement=meas,
-                    defpoint=dp,
-                    defpoint2=dp2,
-                    override_text=dim.get("text"),
-                    layer=dim.get("layer", "dimension"),
-                )
+        dims = ir_data.get("dimensions") or []
+        if isinstance(dims, (list, tuple)):
+            for dim in dims:
+                if not isinstance(dim, dict):
+                    continue
+                if target_space and dim.get("space") and dim.get("space") != target_space:
+                    continue
+                meas = dim.get("measurement")
+                dp = dim.get("defpoint")
+                dp2 = dim.get("defpoint2")
+                if meas is not None and dp and dp2:
+                    renderer.draw_dimension_text(
+                        measurement=meas,
+                        defpoint=dp,
+                        defpoint2=dp2,
+                        override_text=dim.get("text"),
+                        layer=dim.get("layer", "dimension"),
+                    )
 
     # 10. Render Annotations (Filtered by space)
     if preset.draw_annotations:
-        for annot in ir_data.get("annotations", []):
-            if target_space and annot.get("space") and annot.get("space") != target_space:
-                continue
-            txt = annot.get("clean_text") or annot.get("raw_text") or ""
-            pos = annot.get("position", [0.0, 0.0])
-            h = annot.get("height", 250.0)
-            renderer.draw_annotation(
-                text=txt,
-                position=pos,
-                height=h,
-                color=annot.get("color"),
-                layer=annot.get("layer"),
-            )
+        annots = ir_data.get("annotations") or []
+        if isinstance(annots, (list, tuple)):
+            for annot in annots:
+                if not isinstance(annot, dict):
+                    continue
+                if target_space and annot.get("space") and annot.get("space") != target_space:
+                    continue
+                txt = annot.get("clean_text") or annot.get("raw_text") or ""
+                pos = annot.get("position", [0.0, 0.0])
+                h = annot.get("height", 250.0)
+                renderer.draw_annotation(
+                    text=txt,
+                    position=pos,
+                    height=h,
+                    color=annot.get("color"),
+                    layer=annot.get("layer"),
+                )
 
     # 11. Save and Finish PDF
     c.showPage()

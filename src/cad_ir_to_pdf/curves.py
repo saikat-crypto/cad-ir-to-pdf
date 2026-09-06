@@ -1,4 +1,4 @@
-﻿"""
+"""
 curves.py — Analytic Arc & Circle to Cubic Bézier converters for PDF vector streams.
 
 PDF graphics operators (canvas.bezier) require Cubic Bézier splines (p0, p1, p2, p3).
@@ -24,6 +24,13 @@ def arc_to_cubic_beziers(
     Subdivides an arc into cubic Bézier segments (each segment <= 90 degrees).
     Returns (start_point, list_of_segments) where each segment is (cp1x, cp1y, cp2x, cp2y, endx, endy).
     """
+    # If start and end angles are virtually identical, this is a degenerate point arc.
+    # Note: Full circles are rendered via circle_to_cubic_beziers or explicit 360-degree sweeps.
+    if abs(start_angle_deg - end_angle_deg) < 1e-6:
+        start_rad = math.radians(start_angle_deg)
+        start_pt = (cx + radius * math.cos(start_rad), cy + radius * math.sin(start_rad))
+        return (start_pt, [])
+
     # Normalize angles
     start_deg = start_angle_deg % 360.0
     end_deg = end_angle_deg % 360.0
