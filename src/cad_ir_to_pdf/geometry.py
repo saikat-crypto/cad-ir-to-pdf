@@ -126,6 +126,34 @@ class ViewportMapping:
         return length * self.scale
 
 
+def calculate_arc_bbox(
+    cx: float, cy: float, r: float, sa_deg: float, ea_deg: float
+) -> Tuple[float, float, float, float]:
+    """Computes the exact bounding box of a circular arc spanning from sa_deg to ea_deg (CCW in degrees)."""
+    if r <= 0:
+        return (cx, cy, cx, cy)
+    sa = sa_deg % 360.0
+    ea = ea_deg % 360.0
+    sa_rad = math.radians(sa_deg)
+    ea_rad = math.radians(ea_deg)
+    xs = [cx + r * math.cos(sa_rad), cx + r * math.cos(ea_rad)]
+    ys = [cy + r * math.sin(sa_rad), cy + r * math.sin(ea_rad)]
+
+    def in_arc(ang: float) -> bool:
+        if sa <= ea:
+            return sa <= ang <= ea
+        else:
+            return ang >= sa or ang <= ea
+
+    for ang in [0.0, 90.0, 180.0, 270.0]:
+        if in_arc(ang):
+            rad = math.radians(ang)
+            xs.append(cx + r * math.cos(rad))
+            ys.append(cy + r * math.sin(rad))
+
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def compute_primitive_bbox(primitives: Dict[str, Any], target_space: Optional[str] = None) -> BoundingBox:
     """Computes the 2D bounding box of a primitive collection, filtering by target space if specified."""
     bbox = BoundingBox()
@@ -145,9 +173,12 @@ def compute_primitive_bbox(primitives: Dict[str, Any], target_space: Optional[st
             continue
         center = arc.get("center")
         r = arc.get("radius", 0.0)
+        sa = arc.get("start_angle", 0.0)
+        ea = arc.get("end_angle", 360.0)
         if center and len(center) >= 2 and r > 0:
-            bbox.expand(center[0] - r, center[1] - r)
-            bbox.expand(center[0] + r, center[1] + r)
+            min_x, min_y, max_x, max_y = calculate_arc_bbox(center[0], center[1], r, sa, ea)
+            bbox.expand(min_x, min_y)
+            bbox.expand(max_x, max_y)
 
     for circle in primitives.get("circles", []):
         if target_space and circle.get("space") and circle.get("space") != target_space:
@@ -253,9 +284,12 @@ def compute_ir_extents(
             continue
         c = arc.get("center")
         r = arc.get("radius", 0.0)
+        sa = arc.get("start_angle", 0.0)
+        ea = arc.get("end_angle", 360.0)
         if c and len(c) >= 2 and r > 0:
-            add_point(c[0] - r, c[1] - r)
-            add_point(c[0] + r, c[1] + r)
+            min_x, min_y, max_x, max_y = calculate_arc_bbox(c[0], c[1], r, sa, ea)
+            add_point(min_x, min_y)
+            add_point(max_x, max_y)
 
     for circle in geom_prims.get("circles", []):
         if target_space and circle.get("space") and circle.get("space") != target_space:

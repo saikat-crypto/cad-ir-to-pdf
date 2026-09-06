@@ -106,3 +106,14 @@ def test_compute_ir_extents_with_outliers():
     bbox_raw = compute_ir_extents(ir_data, target_space="Model", prune_outliers=False)
     assert bbox_raw.min_x == -90000.0
 
+
+def test_calculate_arc_bbox():
+    from cad_ir_to_pdf.geometry import calculate_arc_bbox
+    # Arc centered at (0, 0), radius 10, from 0 to 90 degrees (first quadrant)
+    min_x, min_y, max_x, max_y = calculate_arc_bbox(0.0, 0.0, 10.0, 0.0, 90.0)
+    assert abs(min_x - 0.0) < 1e-5
+    assert abs(min_y - 0.0) < 1e-5
+    assert abs(max_x - 10.0) < 1e-5
+    assert abs(max_y - 10.0) < 1e-5
+
+
