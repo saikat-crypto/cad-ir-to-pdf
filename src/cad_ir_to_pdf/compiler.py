@@ -6,8 +6,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
@@ -25,21 +26,32 @@ from .renderer import (
     hex_to_pdf_color,
     sanitize_metadata_string,
 )
+from .telemetry import ActionTaken, CompilationReport, HardeningCategory, HardeningWarning
 
 
 def compile_ir_to_pdf(
     ir_source: Union[str, Path, Dict[str, Any]],
     output_path: Union[str, Path],
     preset: Optional[PdfPreset] = None,
-) -> Path:
+    report: Optional[CompilationReport] = None,
+    return_report: bool = False,
+) -> Union[Path, Tuple[Path, CompilationReport]]:
     """
     Compiles a LAVINCI_CAD_IR_V3 JSON file, stream, or dict into a vector PDF drawing.
 
     :param ir_source: Filepath or dictionary containing the IR v3 payload.
     :param output_path: Destination file path for the .pdf file.
     :param preset: Custom or built-in PdfPreset (defaults to `presentation-fit-vector`).
-    :return: Resolved Path of the created PDF.
+    :param report: Optional pre-allocated CompilationReport to populate.
+    :param return_report: If True, returns (output_path, CompilationReport). If False, returns output_path.
+    :return: Resolved Path of the created PDF, or (Path, CompilationReport) if return_report=True.
     """
+    t0 = time.perf_counter()
+    out_file = Path(output_path)
+    if report is None:
+        report = CompilationReport(pdf_path=out_file)
+    else:
+        report.pdf_path = out_file
     if preset is None:
         preset = DEFAULT_PRESET
 
@@ -85,6 +97,21 @@ def compile_ir_to_pdf(
         fixed_scale=preset.fixed_scale,
     )
 
+    # Populate telemetry report geometry & viewport metrics
+    report.cad_bbox_extents = {
+        "min_x": bbox.min_x,
+        "min_y": bbox.min_y,
+        "max_x": bbox.max_x,
+        "max_y": bbox.max_y,
+        "width": bbox.width,
+        "height": bbox.height,
+    }
+    report.viewport_scale = vp.scale
+    report.page_dimensions_pt = {
+        "width": page_w,
+        "height": page_h,
+    }
+
     out_file = Path(output_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -103,6 +130,7 @@ def compile_ir_to_pdf(
         viewport=vp,
         preset=preset,
         layer_color_map=layer_colors,
+        report=report,
     )
 
     # Set document metadata safely via renderer helper (Feature 11)
@@ -126,6 +154,7 @@ def compile_ir_to_pdf(
                 continue
             if target_space and line.get("space") and line.get("space") != target_space:
                 continue
+            report.total_entities_read += 1
             renderer.draw_line(
                 start=line.get("start", []),
                 end=line.get("end", []),
@@ -140,6 +169,7 @@ def compile_ir_to_pdf(
                 continue
             if target_space and arc.get("space") and arc.get("space") != target_space:
                 continue
+            report.total_entities_read += 1
             renderer.draw_arc(
                 center=arc.get("center", []),
                 radius=arc.get("radius", 0.0),
@@ -156,6 +186,7 @@ def compile_ir_to_pdf(
                 continue
             if target_space and circle.get("space") and circle.get("space") != target_space:
                 continue
+            report.total_entities_read += 1
             renderer.draw_circle(
                 center=circle.get("center", []),
                 radius=circle.get("radius", 0.0),
@@ -170,6 +201,7 @@ def compile_ir_to_pdf(
                 continue
             if target_space and pline.get("space") and pline.get("space") != target_space:
                 continue
+            report.total_entities_read += 1
             renderer.draw_polyline(
                 points=pline.get("points", []),
                 is_closed=bool(pline.get("is_closed", False)),
@@ -325,6 +357,7 @@ def compile_ir_to_pdf(
                     continue
                 if target_space and comp.get("space") and comp.get("space") != target_space:
                     continue
+                report.total_entities_read += 1
 
                 bname = comp.get("block_name") or comp.get("resolved_name")
                 if not bname:
@@ -371,6 +404,7 @@ def compile_ir_to_pdf(
             for bline in (raw_dlines if isinstance(raw_dlines, (list, tuple)) else []):
                 if not isinstance(bline, dict):
                     continue
+                report.total_entities_read += 1
                 renderer.draw_line(
                     start=bline.get("start", []),
                     end=bline.get("end", []),
@@ -382,6 +416,7 @@ def compile_ir_to_pdf(
             for barc in (raw_darcs if isinstance(raw_darcs, (list, tuple)) else []):
                 if not isinstance(barc, dict):
                     continue
+                report.total_entities_read += 1
                 renderer.draw_arc(
                     center=barc.get("center", []),
                     radius=barc.get("radius", 0.0),
@@ -395,6 +430,7 @@ def compile_ir_to_pdf(
             for bcircle in (raw_dcircles if isinstance(raw_dcircles, (list, tuple)) else []):
                 if not isinstance(bcircle, dict):
                     continue
+                report.total_entities_read += 1
                 renderer.draw_circle(
                     center=bcircle.get("center", []),
                     radius=bcircle.get("radius", 0.0),
@@ -406,6 +442,7 @@ def compile_ir_to_pdf(
             for bpline in (raw_dplines if isinstance(raw_dplines, (list, tuple)) else []):
                 if not isinstance(bpline, dict):
                     continue
+                report.total_entities_read += 1
                 renderer.draw_polyline(
                     points=bpline.get("points", []),
                     is_closed=bool(bpline.get("is_closed", False)),
@@ -422,6 +459,7 @@ def compile_ir_to_pdf(
                     continue
                 if target_space and dim.get("space") and dim.get("space") != target_space:
                     continue
+                report.total_entities_read += 1
                 meas = dim.get("measurement")
                 dp = dim.get("defpoint")
                 dp2 = dim.get("defpoint2")
@@ -443,6 +481,7 @@ def compile_ir_to_pdf(
                     continue
                 if target_space and annot.get("space") and annot.get("space") != target_space:
                     continue
+                report.total_entities_read += 1
                 txt = annot.get("clean_text") or annot.get("raw_text") or ""
                 pos = annot.get("position", [0.0, 0.0])
                 h = annot.get("height", 250.0)
@@ -457,4 +496,8 @@ def compile_ir_to_pdf(
     # 11. Save and Finish PDF
     c.showPage()
     c.save()
+
+    report.conversion_time_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+    if return_report:
+        return out_file, report
     return out_file

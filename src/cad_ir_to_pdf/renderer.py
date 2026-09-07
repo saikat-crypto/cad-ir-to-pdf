@@ -21,6 +21,7 @@ from .config import (
 )
 from .curves import arc_to_cubic_beziers, circle_to_cubic_beziers
 from .geometry import AffineMatrix2D, ViewportMapping, is_valid_point
+from .telemetry import ActionTaken, CompilationReport, HardeningCategory, HardeningWarning
 
 _HEX_COLOR_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 
@@ -230,12 +231,14 @@ class PdfVectorRenderer:
         preset: PdfPreset,
         layer_color_map: Optional[Dict[str, str]] = None,
         warning_collector: Optional[List[Any]] = None,
+        report: Optional[CompilationReport] = None,
     ):
         self.c = pdf_canvas
         self.vp = viewport
         self.preset = preset
         self.layer_colors = layer_color_map or {}
         self.warning_collector = warning_collector
+        self.report = report
         raw_lw = getattr(preset, "default_line_width_pt", DEFAULT_LINE_WIDTH_PT)
         self.default_line_width = sanitize_line_width(raw_lw, default=DEFAULT_LINE_WIDTH_PT)
 
@@ -265,7 +268,27 @@ class PdfVectorRenderer:
     ) -> None:
         """Safely sets PDF document metadata properties on the underlying ReportLab canvas (Feature 11)."""
         safe_title = sanitize_metadata_string(title, default="La Vinci CAD Drawing")
+        if self.report and title is not None and safe_title != str(title):
+            self.report.add_warning(
+                category=HardeningCategory.METADATA_MALFORMED,
+                action=ActionTaken.SANITIZED,
+                entity_type="metadata.title",
+                reason="Title metadata string sanitized",
+                original_value=title,
+                sanitized_value=safe_title,
+            )
+
         safe_author = sanitize_metadata_string(author, default="La Vinci Engine")
+        if self.report and author is not None and safe_author != str(author):
+            self.report.add_warning(
+                category=HardeningCategory.METADATA_MALFORMED,
+                action=ActionTaken.SANITIZED,
+                entity_type="metadata.author",
+                reason="Author metadata string sanitized",
+                original_value=author,
+                sanitized_value=safe_author,
+            )
+
         safe_creator = sanitize_metadata_string(creator, default="cad-ir-to-pdf (La Vinci CAD Compiler)")
 
         try:
@@ -291,6 +314,15 @@ class PdfVectorRenderer:
 
         if subject is not None:
             safe_subj = sanitize_metadata_string(subject, default="")
+            if self.report and safe_subj != str(subject):
+                self.report.add_warning(
+                    category=HardeningCategory.METADATA_MALFORMED,
+                    action=ActionTaken.SANITIZED,
+                    entity_type="metadata.subject",
+                    reason="Subject metadata string sanitized",
+                    original_value=subject,
+                    sanitized_value=safe_subj,
+                )
             if safe_subj:
                 try:
                     self.c.setSubject(safe_subj)
@@ -310,6 +342,16 @@ class PdfVectorRenderer:
             clean_ent = _clean_hex(entity_color)
             if clean_ent:
                 return hex_to_pdf_color(clean_ent, fallback=default_stroke, background_hex=bg)
+            elif self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COLOR_FALLBACK,
+                    action=ActionTaken.FALLBACK_APPLIED,
+                    entity_type="color",
+                    reason=f"Malformed entity color '{entity_color}', fallback applied",
+                    layer=layer_name,
+                    original_value=entity_color,
+                    sanitized_value=default_stroke,
+                )
 
         # Check layer color with type check
         if isinstance(layer_name, str) and layer_name in self.layer_colors:
@@ -317,6 +359,16 @@ class PdfVectorRenderer:
             clean_layer = _clean_hex(raw_layer_color)
             if clean_layer:
                 return hex_to_pdf_color(clean_layer, fallback=default_stroke, background_hex=bg)
+            elif self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COLOR_FALLBACK,
+                    action=ActionTaken.FALLBACK_APPLIED,
+                    entity_type="color",
+                    reason=f"Malformed layer color '{raw_layer_color}' for layer '{layer_name}', fallback applied",
+                    layer=layer_name,
+                    original_value=raw_layer_color,
+                    sanitized_value=default_stroke,
+                )
 
         return hex_to_pdf_color(None, fallback=default_stroke, background_hex=bg)
 
@@ -330,6 +382,15 @@ class PdfVectorRenderer:
         try:
             self.c.setFont(target_font, safe_size)
         except Exception:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.FONT_FALLBACK,
+                    action=ActionTaken.FALLBACK_APPLIED,
+                    entity_type="font",
+                    reason=f"Font '{target_font}' unregistered or invalid, falling back to '{DEFAULT_FONT_NAME}'",
+                    original_value=target_font,
+                    sanitized_value=DEFAULT_FONT_NAME,
+                )
             try:
                 self.c.setFont(DEFAULT_FONT_NAME, safe_size)
             except Exception:
@@ -347,6 +408,15 @@ class PdfVectorRenderer:
     ) -> None:
         """Renders a single vector line segment. Drops zero-length lines (Feature 15 / INV-06)."""
         if not is_valid_point(start) or not is_valid_point(end):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="line",
+                    reason="Invalid start or end coordinate",
+                    layer=layer,
+                    original_value=(start, end),
+                )
             return
 
         x0, y0 = float(start[0]), float(start[1])
@@ -355,6 +425,15 @@ class PdfVectorRenderer:
         # Feature 15 (INV-06): Drop zero-length line in CAD coordinate space
         try:
             if math.hypot(x1 - x0, y1 - y0) < 1e-6:
+                if self.report:
+                    self.report.add_warning(
+                        category=HardeningCategory.DEGENERATE_GEOMETRY,
+                        action=ActionTaken.DROPPED,
+                        entity_type="line",
+                        reason="Zero-length line in CAD coordinates",
+                        layer=layer,
+                        original_value=(start, end),
+                    )
                 return
         except OverflowError:
             pass
@@ -366,6 +445,14 @@ class PdfVectorRenderer:
             # Re-check in transformed world space
             try:
                 if math.hypot(x1 - x0, y1 - y0) < 1e-6:
+                    if self.report:
+                        self.report.add_warning(
+                            category=HardeningCategory.DEGENERATE_GEOMETRY,
+                            action=ActionTaken.DROPPED,
+                            entity_type="line",
+                            reason="Zero-length line in transformed coordinates",
+                            layer=layer,
+                        )
                     return
             except OverflowError:
                 pass
@@ -374,11 +461,27 @@ class PdfVectorRenderer:
         px1, py1 = self.vp.to_pdf(x1, y1)
 
         if not (math.isfinite(px0) and math.isfinite(py0) and math.isfinite(px1) and math.isfinite(py1)):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="line",
+                    reason="Non-finite PDF coordinates",
+                    layer=layer,
+                )
             return
 
         # Feature 15 (INV-06): Drop zero-length line in PDF point space to emit zero redundant operators
         try:
             if math.hypot(px1 - px0, py1 - py0) < 1e-6:
+                if self.report:
+                    self.report.add_warning(
+                        category=HardeningCategory.DEGENERATE_GEOMETRY,
+                        action=ActionTaken.DROPPED,
+                        entity_type="line",
+                        reason="Zero-length line in PDF points",
+                        layer=layer,
+                    )
                 return
         except OverflowError:
             pass
@@ -389,6 +492,8 @@ class PdfVectorRenderer:
         self.c.setStrokeColor(col)
         self.c.setLineWidth(lw)
         self.c.line(px0, py0, px1, py1)
+        if self.report:
+            self.report.total_entities_rendered += 1
 
     def draw_polyline(
         self,
@@ -401,6 +506,14 @@ class PdfVectorRenderer:
     ) -> None:
         """Renders a polyline path with native vector lines. Filters coincident vertices (Feature 15)."""
         if not isinstance(points, (list, tuple)) or len(points) < 2:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="polyline",
+                    reason="Polyline has fewer than 2 points or invalid collection",
+                    layer=layer,
+                )
             return
 
         transformed_pts: List[Tuple[float, float]] = []
@@ -415,6 +528,14 @@ class PdfVectorRenderer:
                 transformed_pts.append((px, py))
 
         if len(transformed_pts) < 2:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="polyline",
+                    reason="Polyline has fewer than 2 valid transformed points",
+                    layer=layer,
+                )
             return
 
         # Filter consecutive coincident points (< 1e-6 pt) to avoid redundant zero-length lineTo operators
@@ -427,6 +548,14 @@ class PdfVectorRenderer:
             filtered_pts.pop()
 
         if len(filtered_pts) < 2:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="polyline",
+                    reason="Polyline vertices collapsed to single point",
+                    layer=layer,
+                )
             return
 
         col = self.resolve_color(color, layer)
@@ -442,6 +571,8 @@ class PdfVectorRenderer:
         if is_closed:
             path.close()
         self.c.drawPath(path, stroke=1, fill=0)
+        if self.report:
+            self.report.total_entities_rendered += 1
 
     def draw_arc(
         self,
@@ -453,25 +584,79 @@ class PdfVectorRenderer:
         layer: Optional[str] = None,
         line_width: Optional[float] = None,
         transform: Optional[AffineMatrix2D] = None,
+        is_circle: bool = False,
     ) -> None:
         """Renders an arc converted into cubic Bézier segments. Drops zero/negative radius & zero sweeps (Feature 16)."""
+        ent_label = "circle" if is_circle else "arc"
         if not is_valid_point(center):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"Invalid {ent_label} center coordinate",
+                    layer=layer,
+                    original_value=center,
+                )
             return
         # Feature 16: Zero/Negative/Non-finite radius dropping
         if not isinstance(radius, (int, float)) or isinstance(radius, bool) or not math.isfinite(radius) or radius <= 0:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"Zero, negative, or non-finite {ent_label} radius",
+                    layer=layer,
+                    original_value=radius,
+                )
             return
         if not isinstance(start_angle_deg, (int, float)) or isinstance(start_angle_deg, bool) or not math.isfinite(start_angle_deg):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"Non-finite start angle for {ent_label}",
+                    layer=layer,
+                    original_value=start_angle_deg,
+                )
             return
         if not isinstance(end_angle_deg, (int, float)) or isinstance(end_angle_deg, bool) or not math.isfinite(end_angle_deg):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"Non-finite end angle for {ent_label}",
+                    layer=layer,
+                    original_value=end_angle_deg,
+                )
             return
 
         # Zero-sweep arc check (INV-08)
         if abs(float(end_angle_deg) - float(start_angle_deg)) < 1e-6:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"Zero-sweep {ent_label}",
+                    layer=layer,
+                )
             return
 
         cx, cy = float(center[0]), float(center[1])
         start_pt, segments = arc_to_cubic_beziers(cx, cy, float(radius), float(start_angle_deg), float(end_angle_deg))
         if not segments:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"Failed to generate Bézier segments for {ent_label}",
+                    layer=layer,
+                )
             return
 
         # Apply transforms to Bézier control points
@@ -482,6 +667,14 @@ class PdfVectorRenderer:
 
         p0_pdf = tx_pt(start_pt[0], start_pt[1])
         if not (math.isfinite(p0_pdf[0]) and math.isfinite(p0_pdf[1])):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"Non-finite transformed {ent_label} start point",
+                    layer=layer,
+                )
             return
 
         # Validate all segment points and verify non-degenerate extent on PDF canvas
@@ -492,6 +685,14 @@ class PdfVectorRenderer:
             cp2_pdf = tx_pt(cp2x, cp2y)
             end_pdf = tx_pt(endx, endy)
             if not all(math.isfinite(v) for v in (cp1_pdf[0], cp1_pdf[1], cp2_pdf[0], cp2_pdf[1], end_pdf[0], end_pdf[1])):
+                if self.report:
+                    self.report.add_warning(
+                        category=HardeningCategory.COORDINATE_SINGULARITY,
+                        action=ActionTaken.DROPPED,
+                        entity_type=ent_label,
+                        reason=f"Non-finite control points for {ent_label}",
+                        layer=layer,
+                    )
                 return
             if (
                 math.hypot(cp1_pdf[0] - p0_pdf[0], cp1_pdf[1] - p0_pdf[1]) >= 1e-6
@@ -502,6 +703,14 @@ class PdfVectorRenderer:
             transformed_segments.append((cp1_pdf[0], cp1_pdf[1], cp2_pdf[0], cp2_pdf[1], end_pdf[0], end_pdf[1]))
 
         if is_degenerate or not transformed_segments:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type=ent_label,
+                    reason=f"{ent_label} collapsed to degenerate dimensions on PDF canvas",
+                    layer=layer,
+                )
             return
 
         col = self.resolve_color(color, layer)
@@ -517,6 +726,8 @@ class PdfVectorRenderer:
             path.curveTo(cp1_pdf_x, cp1_pdf_y, cp2_pdf_x, cp2_pdf_y, end_pdf_x, end_pdf_y)
 
         self.c.drawPath(path, stroke=1, fill=0)
+        if self.report:
+            self.report.total_entities_rendered += 1
 
     def draw_circle(
         self,
@@ -529,8 +740,26 @@ class PdfVectorRenderer:
     ) -> None:
         """Renders a 360-degree circle. Drops zero, negative, or non-finite radius (Feature 16)."""
         if not is_valid_point(center):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="circle",
+                    reason="Invalid circle center coordinate",
+                    layer=layer,
+                    original_value=center,
+                )
             return
         if not isinstance(radius, (int, float)) or isinstance(radius, bool) or not math.isfinite(radius) or radius <= 0:
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="circle",
+                    reason="Zero, negative, or non-finite circle radius",
+                    layer=layer,
+                    original_value=radius,
+                )
             return
         self.draw_arc(
             center=center,
@@ -541,6 +770,7 @@ class PdfVectorRenderer:
             layer=layer,
             line_width=line_width,
             transform=transform,
+            is_circle=True,
         )
 
     def draw_annotation(
@@ -553,16 +783,41 @@ class PdfVectorRenderer:
     ) -> None:
         """Renders text labels. Clamps font size to [1.0, 144.0] pt (Feature 14 / INV-19)."""
         if text is None or not is_valid_point(position):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="annotation",
+                    reason="Missing annotation text or invalid position",
+                    layer=layer,
+                )
             return
 
         clean = sanitize_cad_text(text)
         if not clean or not clean.strip():
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="annotation",
+                    reason="Annotation text empty after sanitization",
+                    layer=layer,
+                    original_value=text,
+                )
             return
 
         h = float(height) if (isinstance(height, (int, float)) and not isinstance(height, bool) and math.isfinite(height) and height > 0) else 250.0
 
         px, py = self.vp.to_pdf(float(position[0]), float(position[1]))
         if not (math.isfinite(px) and math.isfinite(py)):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.COORDINATE_SINGULARITY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="annotation",
+                    reason="Non-finite PDF coordinates for annotation",
+                    layer=layer,
+                )
             return
 
         # Font size proportional to CAD height scaled to PDF points, clamped to [1.0, 144.0] pt
@@ -578,6 +833,7 @@ class PdfVectorRenderer:
 
         lines = clean.split("\n")
         line_spacing = actual_font_size * 1.2
+        rendered_any = False
         for i, line_str in enumerate(lines):
             stripped = line_str.strip()
             if not stripped:
@@ -585,6 +841,9 @@ class PdfVectorRenderer:
             line_y = baseline_y - (i * line_spacing)
             if math.isfinite(line_y):
                 self.c.drawString(px, line_y, stripped)
+                rendered_any = True
+        if rendered_any and self.report:
+            self.report.total_entities_rendered += 1
 
     def draw_dimension_text(
         self,
@@ -605,10 +864,26 @@ class PdfVectorRenderer:
             or not is_valid_point(defpoint)
             or not is_valid_point(defpoint2)
         ):
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="dimension",
+                    reason="Invalid dimension measurement or definition points",
+                    layer=layer,
+                )
             return
 
         txt = sanitize_cad_text(override_text) if (override_text and isinstance(override_text, str)) else f"{round(float(measurement))}"
         if not txt or not txt.strip():
+            if self.report:
+                self.report.add_warning(
+                    category=HardeningCategory.DEGENERATE_GEOMETRY,
+                    action=ActionTaken.DROPPED,
+                    entity_type="dimension",
+                    reason="Dimension text empty after sanitization",
+                    layer=layer,
+                )
             return
 
         dp0 = float(defpoint[0])
@@ -634,6 +909,8 @@ class PdfVectorRenderer:
             px, py = self.vp.to_pdf(mid_x, mid_y)
             if math.isfinite(px) and math.isfinite(py):
                 self.c.drawCentredString(px, py, txt.strip())
+                if self.report:
+                    self.report.total_entities_rendered += 1
         else:
             # Vertical dimension line: center and rotate 90 degrees
             mid_x = dp0 - 100.0
@@ -645,4 +922,6 @@ class PdfVectorRenderer:
                 self.c.rotate(90)
                 self.c.drawCentredString(0, 0, txt.strip())
                 self.c.restoreState()
+                if self.report:
+                    self.report.total_entities_rendered += 1
 

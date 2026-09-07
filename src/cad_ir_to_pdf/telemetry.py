@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class HardeningCategory(str, Enum):
@@ -48,3 +48,36 @@ class CompilationReport:
     total_entities_dropped: int = 0
     total_entities_sanitized: int = 0
     warnings: List[HardeningWarning] = field(default_factory=list)
+    conversion_time_ms: float = 0.0
+    cad_bbox_extents: Optional[Dict[str, float]] = None
+    viewport_scale: float = 1.0
+    page_dimensions_pt: Optional[Dict[str, float]] = None
+
+    def add_warning(
+        self,
+        category: HardeningCategory,
+        action: ActionTaken,
+        entity_type: str,
+        reason: str,
+        entity_index: Optional[int] = None,
+        layer: Optional[str] = None,
+        original_value: Any = None,
+        sanitized_value: Any = None,
+    ) -> HardeningWarning:
+        """Helper to append a structured warning and adjust summary counters."""
+        warn = HardeningWarning(
+            category=category,
+            action=action,
+            entity_type=entity_type,
+            reason=reason,
+            entity_index=entity_index,
+            layer=layer,
+            original_value=original_value,
+            sanitized_value=sanitized_value,
+        )
+        self.warnings.append(warn)
+        if action == ActionTaken.DROPPED:
+            self.total_entities_dropped += 1
+        elif action in (ActionTaken.SANITIZED, ActionTaken.CLAMPED, ActionTaken.FALLBACK_APPLIED):
+            self.total_entities_sanitized += 1
+        return warn
