@@ -60,6 +60,7 @@ def hex_to_pdf_color(
     fallback: str = "#000000",
     background_hex: Optional[str] = "#FFFFFF",
     bg_color: Optional[str] = None,
+    is_background: bool = False,
 ) -> colors.Color:
     """
     Feature 12: Converts a hex string (#RRGGBB, #RGB, RRGGBB, RGB, #RRGGBBAA) to a ReportLab Color.
@@ -69,9 +70,11 @@ def hex_to_pdf_color(
     - If fallback is invalid, corrupted, or raises an error, safely falls back to reportlab.lib.colors.black.
 
     Contrast safety:
-    - On light backgrounds (or default white #FFFFFF), pure white strokes (#FFFFFF, #FFF)
-      are remapped to `fallback` (or dark contrast color) to ensure vector visibility.
-    - On dark backgrounds, near-black strokes are remapped to #FFFFFF to ensure visibility.
+    - When is_background=False:
+      - On light backgrounds (or default white #FFFFFF), pure white strokes (#FFFFFF, #FFF)
+        are remapped to `fallback` (or dark contrast color) to ensure vector visibility.
+      - On dark backgrounds, near-black strokes are remapped to #FFFFFF to ensure visibility.
+    - When is_background=True: returns the exact clean color (e.g. #FFFFFF remains #FFFFFF).
     """
     fb_clean = _clean_hex(fallback) or "#000000"
 
@@ -79,23 +82,24 @@ def hex_to_pdf_color(
     if not target_clean:
         target_clean = fb_clean
 
-    bg = bg_color if bg_color is not None else background_hex
-    bg_clean = _clean_hex(bg)
-    bg_lum = _hex_luminance(bg_clean) if bg_clean else 1.0
+    if not is_background:
+        bg = bg_color if bg_color is not None else background_hex
+        bg_clean = _clean_hex(bg)
+        bg_lum = _hex_luminance(bg_clean) if bg_clean else 1.0
 
-    target_lum = _hex_luminance(target_clean)
+        target_lum = _hex_luminance(target_clean)
 
-    # Background-aware contrast safety check:
-    if bg_clean and bg_lum < 0.2:
-        # Dark background: prevent invisible dark strokes on dark bg
-        if target_lum <= 0.1 or target_clean in ("#000000", "#000"):
-            target_clean = "#FFFFFF"
-    else:
-        # Light background (or default white): prevent invisible white strokes on white bg
-        if (target_clean in ("#FFFFFF", "#FFF") or target_lum > 0.95) and fb_clean not in ("#FFFFFF", "#FFF"):
-            target_clean = fb_clean
-        elif (target_clean in ("#FFFFFF", "#FFF") or target_lum > 0.95) and bg_clean and bg_lum >= 0.8:
-            target_clean = "#000000"
+        # Background-aware contrast safety check for foreground strokes:
+        if bg_clean and bg_lum < 0.2:
+            # Dark background: prevent invisible dark strokes on dark bg
+            if target_lum <= 0.1 or target_clean in ("#000000", "#000"):
+                target_clean = "#FFFFFF"
+        else:
+            # Light background (or default white): prevent invisible white strokes on white bg
+            if (target_clean in ("#FFFFFF", "#FFF") or target_lum > 0.95) and fb_clean not in ("#FFFFFF", "#FFF"):
+                target_clean = fb_clean
+            elif (target_clean in ("#FFFFFF", "#FFF") or target_lum > 0.95) and bg_clean and bg_lum >= 0.8:
+                target_clean = "#000000"
 
     try:
         return colors.HexColor(target_clean)
