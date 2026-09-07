@@ -198,3 +198,74 @@ def test_m4_missing_child_block_definition(tmp_path: Path):
     res = compile_ir_to_pdf(ir_payload, out_pdf)
     assert res.exists()
     assert res.stat().st_size > 0
+
+
+def test_m4_nested_block_extreme_offset_and_multi_turn_rotation(tmp_path: Path):
+    """Verify nested block with extreme base_point offset (10^30), multi-turn rotation (>3600°), and negative scale."""
+    ir_payload = {
+        "format": "LAVINCI_CAD_IR_V3",
+        "block_definitions": {
+            "ExtremeChild": {
+                "name": "ExtremeChild",
+                "base_point": [1e30, -1e30, 0.0],
+                "lines": [{"start": [1e30, -1e30], "end": [1e30 + 10.0, -1e30 + 10.0]}],
+            },
+            "ExtremeParent": {
+                "name": "ExtremeParent",
+                "components": [
+                    {
+                        "block_name": "ExtremeChild",
+                        "position": [0.0, 0.0, 0.0],
+                        "rotation": 7250.0,
+                        "scale": [-2.0, -3.0, 1.0],
+                    }
+                ]
+            }
+        },
+        "components": [
+            {
+                "block_name": "ExtremeParent",
+                "position": [200.0, 300.0, 0.0],
+                "rotation": 450.0,
+            }
+        ]
+    }
+    out_pdf = tmp_path / "extreme_nested_offset.pdf"
+    res = compile_ir_to_pdf(ir_payload, out_pdf)
+    assert res.exists()
+    assert res.stat().st_size > 0
+
+
+def test_m4_nested_block_reflected_arc(tmp_path: Path):
+    """Verify arc rendering in nested block with reflection (det < 0, negative scaling)."""
+    ir_payload = {
+        "format": "LAVINCI_CAD_IR_V3",
+        "block_definitions": {
+            "ArcChild": {
+                "name": "ArcChild",
+                "arcs": [{"center": [0.0, 0.0], "radius": 25.0, "start_angle": 0.0, "end_angle": 90.0}],
+            },
+            "ArcParent": {
+                "name": "ArcParent",
+                "components": [
+                    {
+                        "block_name": "ArcChild",
+                        "position": [10.0, 20.0, 0.0],
+                        "scale": [1.0, -1.0, 1.0],  # Reflection across X axis
+                    }
+                ]
+            }
+        },
+        "components": [
+            {
+                "block_name": "ArcParent",
+                "position": [50.0, 50.0, 0.0],
+                "scale": [-1.0, 1.0, 1.0],  # Reflection across Y axis (double reflection flips back)
+            }
+        ]
+    }
+    out_pdf = tmp_path / "reflected_nested_arc.pdf"
+    res = compile_ir_to_pdf(ir_payload, out_pdf)
+    assert res.exists()
+    assert res.stat().st_size > 0
+
