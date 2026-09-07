@@ -750,13 +750,73 @@ def compute_ir_extents(
                     if is_valid_point(pt):
                         add_point(pt[0], pt[1])
 
-    # 2. Block definitions cache
+    # 2. Block definitions cache (with nested components support, cycle detection, and max depth 16)
     raw_block_defs = ir_data.get("block_definitions") or {}
     block_defs = raw_block_defs if isinstance(raw_block_defs, dict) else {}
     block_bboxes: Dict[str, BoundingBox] = {}
+
+    def _compute_block_bbox_recursive(
+        b_name: str,
+        depth: int = 0,
+        visited: Optional[set] = None,
+    ) -> BoundingBox:
+        if depth > 16 or not isinstance(b_name, str):
+            return BoundingBox()
+        if visited is None:
+            visited = set()
+        if b_name in visited:
+            return BoundingBox()  # Cycle detected
+        b_data = block_defs.get(b_name)
+        if not isinstance(b_data, dict):
+            return BoundingBox()
+
+        bbox = compute_primitive_bbox(b_data)
+
+        raw_nested = b_data.get("components")
+        nested_comps = raw_nested if isinstance(raw_nested, (list, tuple)) else []
+        if nested_comps:
+            visited.add(b_name)
+            for n_comp in nested_comps:
+                if not isinstance(n_comp, dict):
+                    continue
+                child_bname = n_comp.get("block_name") or n_comp.get("resolved_name")
+                if not child_bname or child_bname not in block_defs:
+                    continue
+                child_bbox = _compute_block_bbox_recursive(child_bname, depth + 1, visited)
+                if not child_bbox.is_valid:
+                    continue
+                child_bdef = block_defs.get(child_bname) if isinstance(block_defs.get(child_bname), dict) else {}
+                child_base = child_bdef.get("base_point") or [0.0, 0.0, 0.0]
+                n_pos = n_comp.get("position") or [0.0, 0.0, 0.0]
+                n_rot = n_comp.get("rotation", 0.0)
+                n_scale = n_comp.get("scale") or [1.0, 1.0, 1.0]
+
+                sx_raw = n_scale[0] if (isinstance(n_scale, (list, tuple)) and len(n_scale) > 0) else 1.0
+                sy_raw = n_scale[1] if (isinstance(n_scale, (list, tuple)) and len(n_scale) > 1) else 1.0
+                n_mat = AffineMatrix2D.from_cad_insert(
+                    pos_x=n_pos[0] if is_valid_point(n_pos) else 0.0,
+                    pos_y=n_pos[1] if is_valid_point(n_pos) else 0.0,
+                    rotation_deg=0.0 if _safe_float(n_rot) is None else _safe_float(n_rot),
+                    scale_x=1.0 if _safe_float(sx_raw) is None else _safe_float(sx_raw),
+                    scale_y=1.0 if _safe_float(sy_raw) is None else _safe_float(sy_raw),
+                    base_x=child_base[0] if is_valid_point(child_base) else 0.0,
+                    base_y=child_base[1] if is_valid_point(child_base) else 0.0,
+                )
+                for cx, cy in [
+                    (child_bbox.min_x, child_bbox.min_y),
+                    (child_bbox.max_x, child_bbox.min_y),
+                    (child_bbox.max_x, child_bbox.max_y),
+                    (child_bbox.min_x, child_bbox.max_y),
+                ]:
+                    tx, ty = n_mat.transform_point(cx, cy)
+                    bbox.expand(tx, ty)
+            visited.remove(b_name)
+
+        return bbox
+
     for name, bdata in block_defs.items():
         if isinstance(bdata, dict):
-            block_bboxes[name] = compute_primitive_bbox(bdata)
+            block_bboxes[name] = _compute_block_bbox_recursive(name)
 
     # 3. Components (transformed into world coordinates)
     raw_comp = ir_data.get("components")
@@ -894,14 +954,23 @@ def calculate_viewport_mapping(
     if not isinstance(cad_bbox, BoundingBox) or not cad_bbox.is_valid:
         cad_bbox = BoundingBox(0.0, 0.0, 100.0, 100.0)
 
-    cad_w = max(cad_bbox.width, 1e-6)
-    cad_h = max(cad_bbox.height, 1e-6)
-
     fs_val = _safe_float(fixed_scale)
     if scale_mode == "fixed" and fs_val is not None and fs_val > 0:
         raw_scale = fs_val
     else:
-        raw_scale = min(avail_w / cad_w, avail_h / cad_h)
+        w_collinear = cad_bbox.width < 1e-6
+        h_collinear = cad_bbox.height < 1e-6
+        if w_collinear and h_collinear:
+            if cad_bbox.width == 0.0 and cad_bbox.height == 0.0:
+                raw_scale = 1.0
+            else:
+                raw_scale = min(avail_w / max(cad_bbox.width, 1e-9), avail_h / max(cad_bbox.height, 1e-9))
+        elif w_collinear:
+            raw_scale = avail_h / cad_bbox.height
+        elif h_collinear:
+            raw_scale = avail_w / cad_bbox.width
+        else:
+            raw_scale = min(avail_w / cad_bbox.width, avail_h / cad_bbox.height)
 
     if not math.isfinite(raw_scale) or raw_scale <= 0.0:
         scale = 1.0

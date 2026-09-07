@@ -4,6 +4,7 @@ compiler.py — Core orchestrator compiling LAVINCI_CAD_IR_V3 to high-fidelity v
 
 from __future__ import annotations
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -177,11 +178,146 @@ def compile_ir_to_pdf(
                 line_width=pline.get("line_width"),
             )
 
-    # 8. Render Block Component Instances (Filtered by space)
+    # 8. Render Block Component Instances (Filtered by space, with recursive nested blocks)
     if preset.draw_components:
         raw_block_defs = ir_data.get("block_definitions") or {}
         block_defs = raw_block_defs if isinstance(raw_block_defs, dict) else {}
         components = ir_data.get("components") or []
+
+        MAX_BLOCK_DEPTH = 16
+
+        def _render_block_recursive(
+            bname: str,
+            current_mat: AffineMatrix2D,
+            parent_layer: Optional[str],
+            depth: int,
+            visited_path: set,
+        ) -> None:
+            if depth > MAX_BLOCK_DEPTH:
+                return
+            if bname in visited_path:
+                return
+            bdata = block_defs.get(bname)
+            if not isinstance(bdata, dict):
+                return
+
+            visited_path.add(bname)
+
+            # Radii scaling under affine matrix: average axis scale
+            sx_len = math.hypot(current_mat.a, current_mat.b)
+            sy_len = math.hypot(current_mat.c, current_mat.d)
+            effective_scale = (sx_len + sy_len) / 2.0
+
+            # Render lines
+            raw_blines = bdata.get("lines")
+            for bline in (raw_blines if isinstance(raw_blines, (list, tuple)) else []):
+                if not isinstance(bline, dict):
+                    continue
+                renderer.draw_line(
+                    start=bline.get("start", []),
+                    end=bline.get("end", []),
+                    color=bline.get("color"),
+                    layer=bline.get("layer") or parent_layer,
+                    line_width=bline.get("line_width"),
+                    transform=current_mat,
+                )
+
+            # Render arcs
+            raw_barcs = bdata.get("arcs")
+            for barc in (raw_barcs if isinstance(raw_barcs, (list, tuple)) else []):
+                if not isinstance(barc, dict):
+                    continue
+                orig_r = barc.get("radius", 0.0)
+                r = orig_r * effective_scale if isinstance(orig_r, (int, float)) else 0.0
+                ac = barc.get("center") or [0.0, 0.0]
+                acx = ac[0] if (isinstance(ac, (list, tuple)) and len(ac) > 0 and isinstance(ac[0], (int, float))) else 0.0
+                acy = ac[1] if (isinstance(ac, (list, tuple)) and len(ac) > 1 and isinstance(ac[1], (int, float))) else 0.0
+                tx_c = current_mat.transform_point(acx, acy)
+                sa = barc.get("start_angle", 0.0)
+                ea = barc.get("end_angle", 360.0)
+                sa_in = sa if isinstance(sa, (int, float)) else 0.0
+                ea_in = ea if isinstance(ea, (int, float)) else 360.0
+                sa_f, ea_f = current_mat.transform_arc_angles(sa_in, ea_in)
+                renderer.draw_arc(
+                    center=[tx_c[0], tx_c[1]],
+                    radius=r,
+                    start_angle_deg=sa_f,
+                    end_angle_deg=ea_f,
+                    color=barc.get("color"),
+                    layer=barc.get("layer") or parent_layer,
+                    line_width=barc.get("line_width"),
+                )
+
+            # Render circles
+            raw_bcircles = bdata.get("circles")
+            for bcircle in (raw_bcircles if isinstance(raw_bcircles, (list, tuple)) else []):
+                if not isinstance(bcircle, dict):
+                    continue
+                orig_r = bcircle.get("radius", 0.0)
+                r = orig_r * effective_scale if isinstance(orig_r, (int, float)) else 0.0
+                cc = bcircle.get("center") or [0.0, 0.0]
+                ccx = cc[0] if (isinstance(cc, (list, tuple)) and len(cc) > 0 and isinstance(cc[0], (int, float))) else 0.0
+                ccy = cc[1] if (isinstance(cc, (list, tuple)) and len(cc) > 1 and isinstance(cc[1], (int, float))) else 0.0
+                tx_c = current_mat.transform_point(ccx, ccy)
+                renderer.draw_circle(
+                    center=[tx_c[0], tx_c[1]],
+                    radius=r,
+                    color=bcircle.get("color"),
+                    layer=bcircle.get("layer") or parent_layer,
+                    line_width=bcircle.get("line_width"),
+                )
+
+            # Render polylines
+            raw_bplines = bdata.get("polylines")
+            for bpline in (raw_bplines if isinstance(raw_bplines, (list, tuple)) else []):
+                if not isinstance(bpline, dict):
+                    continue
+                renderer.draw_polyline(
+                    points=bpline.get("points", []),
+                    is_closed=bool(bpline.get("is_closed", False)),
+                    color=bpline.get("color"),
+                    layer=bpline.get("layer") or parent_layer,
+                    line_width=bpline.get("line_width"),
+                    transform=current_mat,
+                )
+
+            # Render nested block components
+            raw_nested = bdata.get("components")
+            nested_comps = raw_nested if isinstance(raw_nested, (list, tuple)) else []
+            for n_comp in nested_comps:
+                if not isinstance(n_comp, dict):
+                    continue
+                child_bname = n_comp.get("block_name") or n_comp.get("resolved_name")
+                if not child_bname:
+                    continue
+                child_bdef = block_defs.get(child_bname) if isinstance(block_defs.get(child_bname), dict) else {}
+                child_base = child_bdef.get("base_point") or [0.0, 0.0, 0.0]
+                n_pos = n_comp.get("position") or [0.0, 0.0, 0.0]
+                n_rot = n_comp.get("rotation", 0.0)
+                n_scale = n_comp.get("scale") or [1.0, 1.0, 1.0]
+
+                n_sx = n_scale[0] if (isinstance(n_scale, (list, tuple)) and len(n_scale) > 0 and isinstance(n_scale[0], (int, float))) else 1.0
+                n_sy = n_scale[1] if (isinstance(n_scale, (list, tuple)) and len(n_scale) > 1 and isinstance(n_scale[1], (int, float))) else 1.0
+                n_px = n_pos[0] if (isinstance(n_pos, (list, tuple)) and len(n_pos) > 0 and isinstance(n_pos[0], (int, float))) else 0.0
+                n_py = n_pos[1] if (isinstance(n_pos, (list, tuple)) and len(n_pos) > 1 and isinstance(n_pos[1], (int, float))) else 0.0
+                n_bx = child_base[0] if (isinstance(child_base, (list, tuple)) and len(child_base) > 0 and isinstance(child_base[0], (int, float))) else 0.0
+                n_by = child_base[1] if (isinstance(child_base, (list, tuple)) and len(child_base) > 1 and isinstance(child_base[1], (int, float))) else 0.0
+                n_rot_f = n_rot if isinstance(n_rot, (int, float)) else 0.0
+
+                child_local_mat = AffineMatrix2D.from_cad_insert(
+                    pos_x=n_px,
+                    pos_y=n_py,
+                    rotation_deg=n_rot_f,
+                    scale_x=n_sx,
+                    scale_y=n_sy,
+                    base_x=n_bx,
+                    base_y=n_by,
+                )
+                child_composed_mat = current_mat @ child_local_mat
+                child_layer = n_comp.get("layer") or parent_layer
+                _render_block_recursive(child_bname, child_composed_mat, child_layer, depth + 1, visited_path)
+
+            visited_path.remove(bname)
 
         if isinstance(components, (list, tuple)):
             for comp in components:
@@ -191,6 +327,8 @@ def compile_ir_to_pdf(
                     continue
 
                 bname = comp.get("block_name") or comp.get("resolved_name")
+                if not bname:
+                    continue
                 bdata = block_defs.get(bname)
                 if not isinstance(bdata, dict):
                     continue
@@ -207,7 +345,7 @@ def compile_ir_to_pdf(
                 py = pos[1] if (isinstance(pos, (list, tuple)) and len(pos) > 1 and isinstance(pos[1], (int, float))) else 0.0
                 bx = base_pt[0] if (isinstance(base_pt, (list, tuple)) and len(base_pt) > 0 and isinstance(base_pt[0], (int, float))) else 0.0
                 by = base_pt[1] if (isinstance(base_pt, (list, tuple)) and len(base_pt) > 1 and isinstance(base_pt[1], (int, float))) else 0.0
-                rot_f = rot if (isinstance(rot, (int, float))) else 0.0
+                rot_f = rot if isinstance(rot, (int, float)) else 0.0
 
                 mat = AffineMatrix2D.from_cad_insert(
                     pos_x=px,
@@ -219,76 +357,7 @@ def compile_ir_to_pdf(
                     base_y=by,
                 )
 
-                # Scale factor for radii under non-uniform scaling (average scale)
-                effective_scale = (abs(sx) + abs(sy)) / 2.0
-
-                raw_blines = bdata.get("lines")
-                for bline in (raw_blines if isinstance(raw_blines, (list, tuple)) else []):
-                    if not isinstance(bline, dict):
-                        continue
-                    renderer.draw_line(
-                        start=bline.get("start", []),
-                        end=bline.get("end", []),
-                        color=bline.get("color"),
-                        layer=bline.get("layer") or comp_layer,
-                        line_width=bline.get("line_width"),
-                        transform=mat,
-                    )
-
-                raw_barcs = bdata.get("arcs")
-                for barc in (raw_barcs if isinstance(raw_barcs, (list, tuple)) else []):
-                    if not isinstance(barc, dict):
-                        continue
-                    orig_r = barc.get("radius", 0.0)
-                    r = orig_r * effective_scale if (isinstance(orig_r, (int, float))) else 0.0
-                    ac = barc.get("center") or [0.0, 0.0]
-                    acx = ac[0] if (isinstance(ac, (list, tuple)) and len(ac) > 0 and isinstance(ac[0], (int, float))) else 0.0
-                    acy = ac[1] if (isinstance(ac, (list, tuple)) and len(ac) > 1 and isinstance(ac[1], (int, float))) else 0.0
-                    tx_c = mat.transform_point(acx, acy)
-                    sa = barc.get("start_angle", 0.0)
-                    ea = barc.get("end_angle", 360.0)
-                    sa_f = (sa if isinstance(sa, (int, float)) else 0.0) + rot_f
-                    ea_f = (ea if isinstance(ea, (int, float)) else 360.0) + rot_f
-                    renderer.draw_arc(
-                        center=[tx_c[0], tx_c[1]],
-                        radius=r,
-                        start_angle_deg=sa_f,
-                        end_angle_deg=ea_f,
-                        color=barc.get("color"),
-                        layer=barc.get("layer") or comp_layer,
-                        line_width=barc.get("line_width"),
-                    )
-
-                raw_bcircles = bdata.get("circles")
-                for bcircle in (raw_bcircles if isinstance(raw_bcircles, (list, tuple)) else []):
-                    if not isinstance(bcircle, dict):
-                        continue
-                    orig_r = bcircle.get("radius", 0.0)
-                    r = orig_r * effective_scale if (isinstance(orig_r, (int, float))) else 0.0
-                    cc = bcircle.get("center") or [0.0, 0.0]
-                    ccx = cc[0] if (isinstance(cc, (list, tuple)) and len(cc) > 0 and isinstance(cc[0], (int, float))) else 0.0
-                    ccy = cc[1] if (isinstance(cc, (list, tuple)) and len(cc) > 1 and isinstance(cc[1], (int, float))) else 0.0
-                    tx_c = mat.transform_point(ccx, ccy)
-                    renderer.draw_circle(
-                        center=[tx_c[0], tx_c[1]],
-                        radius=r,
-                        color=bcircle.get("color"),
-                        layer=bcircle.get("layer") or comp_layer,
-                        line_width=bcircle.get("line_width"),
-                    )
-
-                raw_bplines = bdata.get("polylines")
-                for bpline in (raw_bplines if isinstance(raw_bplines, (list, tuple)) else []):
-                    if not isinstance(bpline, dict):
-                        continue
-                    renderer.draw_polyline(
-                        points=bpline.get("points", []),
-                        is_closed=bool(bpline.get("is_closed", False)),
-                        color=bpline.get("color"),
-                        layer=bpline.get("layer") or comp_layer,
-                        line_width=bpline.get("line_width"),
-                        transform=mat,
-                    )
+                _render_block_recursive(bname, mat, comp_layer, depth=0, visited_path=set())
 
     # 9. Render Dimensions & Anonymous Dimension Blocks (*D...)
     if preset.draw_dimensions:
