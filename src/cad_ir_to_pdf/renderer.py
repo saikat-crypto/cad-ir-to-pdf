@@ -857,8 +857,11 @@ class PdfVectorRenderer:
         override_text: Optional[str] = None,
         color: Optional[str] = None,
         layer: Optional[str] = None,
+        text_midpoint: Any = None,
+        text_height: Optional[float] = None,
+        text_rotation: Optional[float] = None,
     ) -> None:
-        """Renders linear dimension measurement text centered along the dimension line (Feature 14)."""
+        """Renders linear dimension measurement text positioned cleanly above/beside the dimension line (Feature 14)."""
         if (
             measurement is None
             or not isinstance(measurement, (int, float))
@@ -898,32 +901,58 @@ class PdfVectorRenderer:
         dx = abs(dp0 - dp20)
         dy = abs(dp1 - dp21)
 
-        # Dimension text scaled proportionally, clamped to [1.0, 144.0] pt
-        raw_size = self.vp.to_pdf_length(250.0)
+        # Dimension text scaled proportionally to CAD text height, clamped to [1.0, 144.0] pt
+        cad_h = float(text_height) if (isinstance(text_height, (int, float)) and not isinstance(text_height, bool) and math.isfinite(text_height) and text_height > 0) else 125.0
+        # Scale font down slightly to emulate slender CAD technical line weights
+        raw_size = self.vp.to_pdf_length(cad_h) * 0.85
         font_sz = self.sanitize_font_size(raw_size, default=10.0)
 
         col = self.resolve_color(color, layer)
         self.c.setFillColor(col)
         self._set_font_safe(getattr(self.preset, "font_name", DEFAULT_FONT_NAME), font_sz)
 
+        # Vertical clearance/breathing space fallback if midpoint is missing
+        clearance = max(3.0, font_sz * 0.4)
+        # Slender CAD typography aspect ratio (0.75 matches technical architectural lettering)
+        aspect_ratio = 0.75
+
         if dx >= dy:
-            # Horizontal dimension line: center above line
-            mid_x = (dp0 + dp20) / 2.0
-            mid_y = dp1 + 100.0
-            px, py = self.vp.to_pdf(mid_x, mid_y)
-            if math.isfinite(px) and math.isfinite(py):
-                self.c.drawCentredString(px, py, txt.strip())
+            # Horizontal dimension line
+            if is_valid_point(text_midpoint):
+                mid_x = float(text_midpoint[0])
+                mid_y = float(text_midpoint[1])
+                line_px, center_py = self.vp.to_pdf(mid_x, mid_y)
+                text_baseline_y = center_py - (font_sz * 0.35)
+            else:
+                mid_x = (dp0 + dp20) / 2.0
+                line_px, line_py = self.vp.to_pdf(mid_x, dp1)
+                text_baseline_y = line_py + clearance
+
+            if math.isfinite(line_px) and math.isfinite(text_baseline_y):
+                self.c.saveState()
+                self.c.translate(line_px, text_baseline_y)
+                self.c.scale(aspect_ratio, 1.0)
+                self.c.drawCentredString(0, 0, txt.strip())
+                self.c.restoreState()
                 if self.report:
                     self.report.total_entities_rendered += 1
         else:
-            # Vertical dimension line: center and rotate 90 degrees
-            mid_x = dp0 - 100.0
-            mid_y = (dp1 + dp21) / 2.0
-            px, py = self.vp.to_pdf(mid_x, mid_y)
-            if math.isfinite(px) and math.isfinite(py):
+            # Vertical dimension line
+            if is_valid_point(text_midpoint):
+                mid_x = float(text_midpoint[0])
+                mid_y = float(text_midpoint[1])
+                center_px, line_py = self.vp.to_pdf(mid_x, mid_y)
+                text_baseline_x = center_px + (font_sz * 0.35)
+            else:
+                mid_y = (dp1 + dp21) / 2.0
+                line_px, line_py = self.vp.to_pdf(dp0, mid_y)
+                text_baseline_x = line_px - clearance
+
+            if math.isfinite(text_baseline_x) and math.isfinite(line_py):
                 self.c.saveState()
-                self.c.translate(px, py)
+                self.c.translate(text_baseline_x, line_py)
                 self.c.rotate(90)
+                self.c.scale(aspect_ratio, 1.0)
                 self.c.drawCentredString(0, 0, txt.strip())
                 self.c.restoreState()
                 if self.report:

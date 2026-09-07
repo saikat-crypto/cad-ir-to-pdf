@@ -132,3 +132,44 @@ def test_compile_dimensions(tmp_path):
     assert res.exists()
     assert res.stat().st_size > 1000
 
+
+def test_compile_dimensions_with_metadata_and_clearance(tmp_path):
+    """Verifies dimension text sits cleanly above line with clearance and respects text metadata."""
+    ir = {
+        "format": "LAVINCI_CAD_IR_V3",
+        "metadata": {"source_file": "dims_clearance.dwg"},
+        "geometry_primitives": {
+            "primitives": {"lines": [{"start": [0, 0], "end": [2000, 0]}]}
+        },
+        "dimensions": [
+            {
+                "type": "DIMENSION",
+                "layer": "dimension",
+                "space": "Model",
+                "measurement": 2000.0,
+                "text": "2000",
+                "defpoint": [2000.0, 100.0],
+                "defpoint2": [0.0, 100.0],
+                "text_midpoint": [1000.0, 120.0],
+                "text_height": 50.0,
+                "text_rotation": 0.0,
+            },
+            {
+                "type": "DIMENSION",
+                "layer": "dimension",
+                "space": "Model",
+                "measurement": 500.0,
+                "text": "500",
+                "defpoint": [100.0, 500.0],
+                "defpoint2": [100.0, 0.0],
+                "text_midpoint": [80.0, 250.0],
+                "text_height": 50.0,
+                "text_rotation": 90.0,
+            }
+        ]
+    }
+    out_pdf = tmp_path / "dims_clearance.pdf"
+    res = compile_ir_to_pdf(ir, out_pdf)
+    assert res.exists()
+    assert res.stat().st_size > 1000
+

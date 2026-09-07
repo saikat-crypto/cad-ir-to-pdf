@@ -502,6 +502,9 @@ def compile_ir_to_pdf(
                         defpoint2=dp2,
                         override_text=dim.get("text"),
                         layer=dim.get("layer", "dimension"),
+                        text_midpoint=dim.get("text_midpoint"),
+                        text_height=dim.get("text_height"),
+                        text_rotation=dim.get("text_rotation"),
                     )
 
     # 10. Render Annotations (Filtered by space)
