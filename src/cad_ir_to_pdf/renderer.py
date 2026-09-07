@@ -904,7 +904,7 @@ class PdfVectorRenderer:
         # Dimension text scaled proportionally to CAD text height, clamped to [1.0, 144.0] pt
         cad_h = float(text_height) if (isinstance(text_height, (int, float)) and not isinstance(text_height, bool) and math.isfinite(text_height) and text_height > 0) else 125.0
         # Scale font down slightly to emulate slender CAD technical line weights
-        raw_size = self.vp.to_pdf_length(cad_h) * 0.85
+        raw_size = self.vp.to_pdf_length(cad_h) * 0.80
         font_sz = self.sanitize_font_size(raw_size, default=10.0)
 
         col = self.resolve_color(color, layer)
@@ -913,8 +913,6 @@ class PdfVectorRenderer:
 
         # Vertical clearance/breathing space fallback
         clearance = max(3.0, font_sz * 0.4)
-        # Slender CAD typography aspect ratio (0.65 matches technical architectural lettering better)
-        aspect_ratio = 0.65
 
         if dx >= dy:
             # Horizontal dimension line
@@ -934,11 +932,7 @@ class PdfVectorRenderer:
                 text_baseline_y = actual_line_py + clearance
 
             if math.isfinite(line_px) and math.isfinite(text_baseline_y):
-                self.c.saveState()
-                self.c.translate(line_px, text_baseline_y)
-                self.c.scale(aspect_ratio, 1.0)
-                self.c.drawCentredString(0, 0, txt.strip())
-                self.c.restoreState()
+                self.c.drawCentredString(line_px, text_baseline_y, txt.strip())
                 if self.report:
                     self.report.total_entities_rendered += 1
         else:
@@ -962,7 +956,6 @@ class PdfVectorRenderer:
                 self.c.saveState()
                 self.c.translate(text_baseline_x, line_py)
                 self.c.rotate(90)
-                self.c.scale(aspect_ratio, 1.0)
                 self.c.drawCentredString(0, 0, txt.strip())
                 self.c.restoreState()
                 if self.report:
