@@ -911,10 +911,10 @@ class PdfVectorRenderer:
         self.c.setFillColor(col)
         self._set_font_safe(getattr(self.preset, "font_name", DEFAULT_FONT_NAME), font_sz)
 
-        # Vertical clearance/breathing space fallback if midpoint is missing
+        # Vertical clearance/breathing space fallback
         clearance = max(3.0, font_sz * 0.4)
-        # Slender CAD typography aspect ratio (0.75 matches technical architectural lettering)
-        aspect_ratio = 0.75
+        # Slender CAD typography aspect ratio (0.65 matches technical architectural lettering better)
+        aspect_ratio = 0.65
 
         if dx >= dy:
             # Horizontal dimension line
@@ -922,11 +922,16 @@ class PdfVectorRenderer:
                 mid_x = float(text_midpoint[0])
                 mid_y = float(text_midpoint[1])
                 line_px, center_py = self.vp.to_pdf(mid_x, mid_y)
+                _, actual_line_py = self.vp.to_pdf(mid_x, dp1)
+                
                 text_baseline_y = center_py - (font_sz * 0.35)
+                # If the calculated baseline is slicing the dimension line (or too close), snap it above
+                if abs(text_baseline_y - actual_line_py) < font_sz:
+                    text_baseline_y = actual_line_py + clearance
             else:
                 mid_x = (dp0 + dp20) / 2.0
-                line_px, line_py = self.vp.to_pdf(mid_x, dp1)
-                text_baseline_y = line_py + clearance
+                line_px, actual_line_py = self.vp.to_pdf(mid_x, dp1)
+                text_baseline_y = actual_line_py + clearance
 
             if math.isfinite(line_px) and math.isfinite(text_baseline_y):
                 self.c.saveState()
@@ -942,11 +947,16 @@ class PdfVectorRenderer:
                 mid_x = float(text_midpoint[0])
                 mid_y = float(text_midpoint[1])
                 center_px, line_py = self.vp.to_pdf(mid_x, mid_y)
+                actual_line_px, _ = self.vp.to_pdf(dp0, mid_y)
+                
                 text_baseline_x = center_px + (font_sz * 0.35)
+                # If the calculated baseline is slicing the dimension line (or too close), snap it left (above)
+                if abs(text_baseline_x - actual_line_px) < font_sz:
+                    text_baseline_x = actual_line_px - clearance
             else:
                 mid_y = (dp1 + dp21) / 2.0
-                line_px, line_py = self.vp.to_pdf(dp0, mid_y)
-                text_baseline_x = line_px - clearance
+                actual_line_px, line_py = self.vp.to_pdf(dp0, mid_y)
+                text_baseline_x = actual_line_px - clearance
 
             if math.isfinite(text_baseline_x) and math.isfinite(line_py):
                 self.c.saveState()
