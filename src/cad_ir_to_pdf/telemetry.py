@@ -38,6 +38,19 @@ class HardeningWarning:
     original_value: Any = None
     sanitized_value: Any = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes warning to a dictionary representation."""
+        return {
+            "category": self.category.value if isinstance(self.category, HardeningCategory) else str(self.category),
+            "action": self.action.value if isinstance(self.action, ActionTaken) else str(self.action),
+            "entity_type": self.entity_type,
+            "reason": self.reason,
+            "entity_index": self.entity_index,
+            "layer": self.layer,
+            "original_value": str(self.original_value) if self.original_value is not None else None,
+            "sanitized_value": str(self.sanitized_value) if self.sanitized_value is not None else None,
+        }
+
 
 @dataclass
 class CompilationReport:
@@ -81,3 +94,20 @@ class CompilationReport:
         elif action in (ActionTaken.SANITIZED, ActionTaken.CLAMPED, ActionTaken.FALLBACK_APPLIED):
             self.total_entities_sanitized += 1
         return warn
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes compilation report to a dictionary representation for JSON/MCP transport."""
+        return {
+            "pdf_path": str(self.pdf_path),
+            "success": self.success,
+            "total_entities_read": self.total_entities_read,
+            "total_entities_rendered": self.total_entities_rendered,
+            "total_entities_dropped": self.total_entities_dropped,
+            "total_entities_sanitized": self.total_entities_sanitized,
+            "conversion_time_ms": self.conversion_time_ms,
+            "cad_bbox_extents": self.cad_bbox_extents,
+            "viewport_scale": self.viewport_scale,
+            "page_dimensions_pt": self.page_dimensions_pt,
+            "warning_count": len(self.warnings),
+            "warnings": [w.to_dict() for w in self.warnings],
+        }

@@ -226,11 +226,35 @@ def compile_ir_to_pdf(
             visited_path: set,
         ) -> None:
             if depth > MAX_BLOCK_DEPTH:
+                report.add_warning(
+                    category=HardeningCategory.BLOCK_ABUSE,
+                    action=ActionTaken.DROPPED,
+                    entity_type="component",
+                    reason=f"Block nesting depth exceeded limit ({MAX_BLOCK_DEPTH}) for block '{bname}'",
+                    layer=parent_layer,
+                    original_value=bname,
+                )
                 return
             if bname in visited_path:
+                report.add_warning(
+                    category=HardeningCategory.BLOCK_ABUSE,
+                    action=ActionTaken.DROPPED,
+                    entity_type="component",
+                    reason=f"Circular block reference detected for block '{bname}'",
+                    layer=parent_layer,
+                    original_value=bname,
+                )
                 return
             bdata = block_defs.get(bname)
             if not isinstance(bdata, dict):
+                report.add_warning(
+                    category=HardeningCategory.BLOCK_ABUSE,
+                    action=ActionTaken.DROPPED,
+                    entity_type="component",
+                    reason=f"Block definition '{bname}' not found or invalid",
+                    layer=parent_layer,
+                    original_value=bname,
+                )
                 return
 
             visited_path.add(bname)
@@ -364,6 +388,14 @@ def compile_ir_to_pdf(
                     continue
                 bdata = block_defs.get(bname)
                 if not isinstance(bdata, dict):
+                    report.add_warning(
+                        category=HardeningCategory.BLOCK_ABUSE,
+                        action=ActionTaken.DROPPED,
+                        entity_type="component",
+                        reason=f"Block definition '{bname}' not found or invalid",
+                        layer=comp.get("layer"),
+                        original_value=bname,
+                    )
                     continue
 
                 pos = comp.get("position") or [0.0, 0.0, 0.0]

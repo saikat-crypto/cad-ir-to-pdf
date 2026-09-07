@@ -263,3 +263,64 @@ def test_telemetry_backwards_compatibility(tmp_path: Path):
     assert isinstance(res, Path)
     assert res == out_pdf
     assert res.exists()
+
+
+def test_telemetry_block_abuse_warnings(tmp_path: Path):
+    """Verify that missing block definitions and circular block references log BLOCK_ABUSE warnings."""
+    ir_data = {
+        "format": "LAVINCI_CAD_IR_V3",
+        "block_definitions": {
+            "CycleA": {
+                "name": "CycleA",
+                "components": [{"block_name": "CycleA", "position": [1, 1]}],
+                "lines": [{"start": [0, 0], "end": [5, 5]}],
+            }
+        },
+        "components": [
+            {"block_name": "NonExistentBlock", "position": [10, 10]},
+            {"block_name": "CycleA", "position": [20, 20]},
+        ],
+    }
+
+    out_pdf = tmp_path / "block_abuse.pdf"
+    _, report = compile_ir_to_pdf(ir_data, out_pdf, return_report=True)
+
+    block_warnings = [w for w in report.warnings if w.category == HardeningCategory.BLOCK_ABUSE]
+    assert len(block_warnings) >= 2
+
+    reasons = [w.reason for w in block_warnings]
+    assert any("not found or invalid" in r for r in reasons)
+    assert any("Circular block reference" in r for r in reasons)
+
+
+def test_telemetry_to_dict_serialization(tmp_path: Path):
+    """Verify that CompilationReport and HardeningWarning serialize cleanly to dict for MCP/JSON transport."""
+    ir_data = {
+        "format": "LAVINCI_CAD_IR_V3",
+        "geometry_primitives": {
+            "primitives": {
+                "lines": [
+                    {"start": [0, 0], "end": [10, 10]},
+                    {"start": [0, 0], "end": [0, 0]},  # degenerate
+                ],
+            }
+        },
+    }
+
+    out_pdf = tmp_path / "to_dict_test.pdf"
+    _, report = compile_ir_to_pdf(ir_data, out_pdf, return_report=True)
+
+    data = report.to_dict()
+    assert isinstance(data, dict)
+    assert data["success"] is True
+    assert data["total_entities_read"] == 2
+    assert data["total_entities_rendered"] == 1
+    assert data["total_entities_dropped"] == 1
+    assert data["warning_count"] == 1
+    assert len(data["warnings"]) == 1
+
+    w0 = data["warnings"][0]
+    assert w0["category"] == "degenerate_geometry"
+    assert w0["action"] == "dropped"
+    assert w0["entity_type"] == "line"
+
