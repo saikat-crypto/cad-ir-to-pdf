@@ -244,11 +244,18 @@ class PdfVectorRenderer:
         self.warning_collector = warning_collector
         self.report = report
         raw_lw = getattr(preset, "default_line_width_pt", DEFAULT_LINE_WIDTH_PT)
-        self.default_line_width = sanitize_line_width(raw_lw, default=DEFAULT_LINE_WIDTH_PT)
+        multiplier = getattr(preset, "line_weight_multiplier", 1.0)
+        if not isinstance(multiplier, (int, float)) or isinstance(multiplier, bool) or not math.isfinite(multiplier) or multiplier <= 0:
+            multiplier = 1.0
+        self.line_weight_multiplier = multiplier
+        self.default_line_width = sanitize_line_width(raw_lw * self.line_weight_multiplier, default=DEFAULT_LINE_WIDTH_PT)
 
     def sanitize_line_width(self, line_width: Any, default: Optional[float] = None) -> float:
         """Sanitizes and clamps line width to [MIN_LINE_WIDTH_PT, MAX_LINE_WIDTH_PT] pt (Feature 13)."""
         def_lw = self.default_line_width if default is None else default
+        if line_width is not None and isinstance(line_width, (int, float)) and not isinstance(line_width, bool) and math.isfinite(line_width) and line_width > 0:
+            scaled_lw = float(line_width) * getattr(self, "line_weight_multiplier", 1.0)
+            return sanitize_line_width(scaled_lw, default=def_lw)
         return sanitize_line_width(line_width, default=def_lw)
 
     def sanitize_font_size(self, size: Any, default: float = 12.0) -> float:
@@ -960,4 +967,29 @@ class PdfVectorRenderer:
                 self.c.restoreState()
                 if self.report:
                     self.report.total_entities_rendered += 1
+
+    def draw_watermark(self, watermark_text: str, page_width_pt: float, page_height_pt: float) -> None:
+        """Renders an elegant semi-transparent diagonal watermark across the page center."""
+        if not watermark_text or not isinstance(watermark_text, str):
+            return
+        txt = watermark_text.strip()
+        if not txt:
+            return
+
+        self.c.saveState()
+        try:
+            # Diagonal angle matching page aspect
+            angle_rad = math.atan2(page_height_pt, page_width_pt)
+            angle_deg = math.degrees(angle_rad)
+            font_size = min(page_width_pt, page_height_pt) * 0.08
+            font_size = max(18.0, min(96.0, font_size))
+
+            self.c.translate(page_width_pt / 2.0, page_height_pt / 2.0)
+            self.c.rotate(angle_deg)
+            # Watermark color: subtle gray with alpha
+            self.c.setFillColor(colors.HexColor("#94A3B8"), alpha=0.18)
+            self._set_font_safe(getattr(self.preset, "font_name", DEFAULT_FONT_NAME), font_size)
+            self.c.drawCentredString(0, -font_size * 0.35, txt)
+        finally:
+            self.c.restoreState()
 

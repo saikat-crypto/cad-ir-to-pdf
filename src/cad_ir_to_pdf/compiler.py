@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 
-from .config import DEFAULT_PRESET, PRESETS, PdfPreset
+from .config import DEFAULT_PRESET, PRESETS, PdfOptions, PdfPreset, get_preset
 from .geometry import (
     AffineMatrix2D,
     BoundingBox,
@@ -32,7 +32,8 @@ from .telemetry import ActionTaken, CompilationReport, HardeningCategory, Harden
 def compile_ir_to_pdf(
     ir_source: Union[str, Path, Dict[str, Any]],
     output_path: Union[str, Path],
-    preset: Optional[PdfPreset] = None,
+    preset: Optional[Union[str, PdfPreset]] = None,
+    options: Optional[Union[PdfOptions, Dict[str, Any]]] = None,
     report: Optional[CompilationReport] = None,
     return_report: bool = False,
 ) -> Union[Path, Tuple[Path, CompilationReport]]:
@@ -41,7 +42,8 @@ def compile_ir_to_pdf(
 
     :param ir_source: Filepath or dictionary containing the IR v3 payload.
     :param output_path: Destination file path for the .pdf file.
-    :param preset: Custom or built-in PdfPreset (defaults to `presentation-fit-vector`).
+    :param preset: Custom preset instance or name string (e.g. 'monochrome-arch', 'dark-blueprint').
+    :param options: Optional PdfOptions or dict of overrides applied on top of the preset.
     :param report: Optional pre-allocated CompilationReport to populate.
     :param return_report: If True, returns (output_path, CompilationReport). If False, returns output_path.
     :return: Resolved Path of the created PDF, or (Path, CompilationReport) if return_report=True.
@@ -52,8 +54,13 @@ def compile_ir_to_pdf(
         report = CompilationReport(pdf_path=out_file)
     else:
         report.pdf_path = out_file
-    if preset is None:
-        preset = DEFAULT_PRESET
+
+    # Resolve baseline preset (string name or PdfPreset instance)
+    resolved_preset = get_preset(preset)
+    if options is not None:
+        preset = resolved_preset.with_options(options)
+    else:
+        preset = resolved_preset
 
     # 1. Load IR Payload
     if isinstance(ir_source, (str, Path)):
@@ -154,6 +161,8 @@ def compile_ir_to_pdf(
                 continue
             if target_space and line.get("space") and line.get("space") != target_space:
                 continue
+            if not preset.is_layer_visible(line.get("layer")):
+                continue
             report.total_entities_read += 1
             renderer.draw_line(
                 start=line.get("start", []),
@@ -168,6 +177,8 @@ def compile_ir_to_pdf(
             if not isinstance(arc, dict):
                 continue
             if target_space and arc.get("space") and arc.get("space") != target_space:
+                continue
+            if not preset.is_layer_visible(arc.get("layer")):
                 continue
             report.total_entities_read += 1
             renderer.draw_arc(
@@ -186,6 +197,8 @@ def compile_ir_to_pdf(
                 continue
             if target_space and circle.get("space") and circle.get("space") != target_space:
                 continue
+            if not preset.is_layer_visible(circle.get("layer")):
+                continue
             report.total_entities_read += 1
             renderer.draw_circle(
                 center=circle.get("center", []),
@@ -200,6 +213,8 @@ def compile_ir_to_pdf(
             if not isinstance(pline, dict):
                 continue
             if target_space and pline.get("space") and pline.get("space") != target_space:
+                continue
+            if not preset.is_layer_visible(pline.get("layer")):
                 continue
             report.total_entities_read += 1
             renderer.draw_polyline(
@@ -516,6 +531,8 @@ def compile_ir_to_pdf(
                     continue
                 if target_space and annot.get("space") and annot.get("space") != target_space:
                     continue
+                if not preset.is_layer_visible(annot.get("layer")):
+                    continue
                 report.total_entities_read += 1
                 txt = annot.get("clean_text") or annot.get("raw_text") or ""
                 pos = annot.get("position", [0.0, 0.0])
@@ -528,7 +545,11 @@ def compile_ir_to_pdf(
                     layer=annot.get("layer"),
                 )
 
-    # 11. Save and Finish PDF
+    # 11. Render Watermark (if requested)
+    if getattr(preset, "watermark_text", None):
+        renderer.draw_watermark(preset.watermark_text, page_w, page_h)
+
+    # 12. Save and Finish PDF
     c.showPage()
     c.save()
 
