@@ -21,8 +21,8 @@ def main() -> int:
     parser.add_argument(
         "--preset",
         choices=list(PRESETS.keys()),
-        default="monochrome-architectural",
-        help="PDF styling and layout preset (default: monochrome-architectural).",
+        default="monochrome-arch",
+        help="PDF styling and layout preset (default: monochrome-arch).",
     )
     parser.add_argument(
         "--color-mode",
